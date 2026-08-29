@@ -21,9 +21,9 @@ export async function POST(request: NextRequest) {
     const now = new Date().toISOString();
     const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
     const orderId = `INV-${Date.now().toString(36).toUpperCase()}-${Math.floor(100 + Math.random() * 900)}`;
-    const planName = plan === "pro" ? "Pro Studio" : "Pro Studio";
-    const amount = 20000;
-    const credits = 100;
+    const planName = plan === "pro-max" ? "Pro Max" : "Pro Studio";
+    const amount = plan === "pro-max" ? 75000 : 20000;
+    const credits = plan === "pro-max" ? 500 : 100;
 
     await db.execute({
       sql: `INSERT INTO orders (id, user_email, plan_name, amount, credits, payment_method, status, created_at, expires_at)

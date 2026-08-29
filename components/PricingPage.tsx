@@ -36,10 +36,10 @@ import { toast } from "sonner";
 const plans = [
   {
     name: "Pro Studio",
-    badge: "Paling Populer",
+    badge: "Populer",
     price: "Rp 20.000",
     period: "sekali beli",
-    desc: "Sekali bayar, pakai selamanya",
+    desc: "Paket standar untuk developer",
     features: [
       "100 Kredit (100 set 4 dokumen)",
       "Semua model AI (Starter & Flagship)",
@@ -48,6 +48,23 @@ const plans = [
       "Dukungan prioritas",
     ],
     cta: "Beli Sekarang",
+    ctaHref: "/login",
+    popular: false,
+  },
+  {
+    name: "Pro Max",
+    badge: "Best Value",
+    price: "Rp 75.000",
+    period: "sekali beli",
+    desc: "Hemat 25% — untuk tim & project besar",
+    features: [
+      "500 Kredit (500 set 4 dokumen)",
+      "Semua model AI (Starter & Flagship)",
+      "Priority Processing",
+      "Ekspor ZIP & MD",
+      "Dukungan prioritas",
+    ],
+    cta: "Beli Pro Max",
     ctaHref: "/login",
     popular: true,
   },
@@ -70,16 +87,19 @@ const plans = [
 ];
 
 const matrixFeatures = [
-  { feature: "Jumlah Dokumen per Kredit", pro: "4 Dokumen", enterprise: "4 Dokumen" },
-  { feature: "PRD.md & User Stories", pro: "✓", enterprise: "✓" },
-  { feature: "TECH-STACK.md Arsitektur", pro: "✓", enterprise: "✓" },
-  { feature: "UI-UX.md & User Flow", pro: "✓", enterprise: "✓" },
-  { feature: "SCHEMA.md ERD & SQL", pro: "✓", enterprise: "✓" },
-  { feature: "Multi-Model AI Engine", pro: "✓", enterprise: "✓" },
-  { feature: "Ekspor Single Markdown (.md)", pro: "✓", enterprise: "✓" },
-  { feature: "Ekspor Bundel Arsip (.ZIP)", pro: "✓", enterprise: "✓" },
-  { feature: "Kecepatan Generasi", pro: "Prioritas Cepat", enterprise: "Ultra Prioritas" },
-  { feature: "Dukungan Pelanggan", pro: "Email 24 Jam", enterprise: "Dedicated Manager" },
+  { feature: "Harga", pro: "Rp 20.000", proMax: "Rp 75.000", enterprise: "Custom" },
+  { feature: "Jumlah Kredit", pro: "100", proMax: "500", enterprise: "Kustom" },
+  { feature: "Harga per Kredit", pro: "Rp 200", proMax: "Rp 150", enterprise: "Kustom" },
+  { feature: "Jumlah Dokumen per Kredit", pro: "4 Dokumen", proMax: "4 Dokumen", enterprise: "4 Dokumen" },
+  { feature: "PRD.md & User Stories", pro: "✓", proMax: "✓", enterprise: "✓" },
+  { feature: "TECH-STACK.md Arsitektur", pro: "✓", proMax: "✓", enterprise: "✓" },
+  { feature: "UI-UX.md & User Flow", pro: "✓", proMax: "✓", enterprise: "✓" },
+  { feature: "SCHEMA.md ERD & SQL", pro: "✓", proMax: "✓", enterprise: "✓" },
+  { feature: "Multi-Model AI Engine", pro: "✓", proMax: "✓", enterprise: "✓" },
+  { feature: "Ekspor Single Markdown (.md)", pro: "✓", proMax: "✓", enterprise: "✓" },
+  { feature: "Ekspor Bundel Arsip (.ZIP)", pro: "✓", proMax: "✓", enterprise: "✓" },
+  { feature: "Kecepatan Generasi", pro: "Prioritas Cepat", proMax: "Ultra Prioritas", enterprise: "Ultra Prioritas" },
+  { feature: "Dukungan Pelanggan", pro: "Email 24 Jam", proMax: "Email 24 Jam", enterprise: "Dedicated Manager" },
 ];
 
 const faqItems = [
@@ -154,19 +174,20 @@ export default function PricingPage() {
   }, []);
 
   async function handleSelectPlan(planName: string) {
-    if (planName === "Pro Studio") {
+    if (planName === "Pro Studio" || planName === "Pro Max") {
       if (!isAuthenticated) {
-        toast.info("Silakan masuk atau daftar akun terlebih dahulu untuk membeli paket Pro Studio.");
+        toast.info("Silakan masuk atau daftar akun terlebih dahulu untuk membeli paket.");
         window.location.assign("/login");
         return;
       }
 
       setIsCreatingOrder(true);
       try {
+        const planKey = planName === "Pro Max" ? "pro-max" : "pro";
         const res = await fetch("/api/checkout/create-order", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ plan: "pro", paymentMethod: "QRIS" }),
+          body: JSON.stringify({ plan: planKey, paymentMethod: "QRIS" }),
         });
         const payload = (await res.json()) as { ok?: boolean; order?: OrderData; error?: string };
         if (!res.ok || !payload.order) {
@@ -387,6 +408,7 @@ export default function PricingPage() {
               <tr>
                 <th>Fitur & Kapabilitas</th>
                 <th style={{ color: "var(--cobalt)", fontWeight: 800 }}>Pro Studio</th>
+                <th style={{ color: "#DC2626", fontWeight: 800 }}>Pro Max</th>
                 <th>Enterprise</th>
               </tr>
             </thead>
@@ -395,6 +417,7 @@ export default function PricingPage() {
                 <tr key={row.feature}>
                   <td style={{ fontWeight: 650 }}>{row.feature}</td>
                   <td style={{ color: "var(--cobalt)", fontWeight: 800 }}>{row.pro}</td>
+                  <td style={{ color: "#DC2626", fontWeight: 800 }}>{row.proMax}</td>
                   <td style={{ color: "var(--text-muted)" }}>{row.enterprise}</td>
                 </tr>
               ))}

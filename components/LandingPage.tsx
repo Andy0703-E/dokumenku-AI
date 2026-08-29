@@ -95,7 +95,7 @@ const PLANS = [
     name: "Pro Studio",
     price: "Rp 20.000",
     period: "sekali beli",
-    desc: "Sekali bayar, pakai selamanya",
+    desc: "Paket standar untuk developer",
     features: [
       "100 Kredit (100 set 4 dokumen)",
       "Semua model AI (Starter & Flagship)",
@@ -103,6 +103,21 @@ const PLANS = [
       "Dukungan prioritas",
     ],
     cta: "Beli Sekarang",
+    popular: false,
+  },
+  {
+    name: "Pro Max",
+    price: "Rp 75.000",
+    period: "sekali beli",
+    desc: "Hemat 25% — untuk tim & project besar",
+    features: [
+      "500 Kredit (500 set 4 dokumen)",
+      "Semua model AI (Starter & Flagship)",
+      "Priority Processing",
+      "Ekspor ZIP & MD",
+      "Dukungan prioritas",
+    ],
+    cta: "Beli Pro Max",
     popular: true,
   },
   {
@@ -135,7 +150,7 @@ const FAQS = [
   {
     icon: Clock,
     q: "Berapa harga paket Dokumenku AI?",
-    a: "Paket Pro Studio seharga Rp 20.000 untuk 100 kredit (100 set 4 dokumen). Sekali bayar, pakai selamanya. Untuk paket Enterprise, silakan hubungi kami via WhatsApp.",
+    a: "Paket Pro Studio Rp 20.000 untuk 100 kredit, atau Pro Max Rp 75.000 untuk 500 kredit (hemat 25%). Sekali bayar, pakai selamanya. Untuk paket Enterprise, silakan hubungi kami via WhatsApp.",
   },
   {
     icon: Edit3,
@@ -570,7 +585,7 @@ export default function LandingPage({ onStart }: LandingPageProps) {
                 className={plan.popular ? "btn-primary" : "btn-secondary"}
                 style={{ width: "100%", minHeight: "44px" }}
                 onClick={() => {
-                  if (plan.name === "Pro Studio") {
+                  if (plan.name === "Pro Studio" || plan.name === "Pro Max") {
                     window.location.assign("/pricing");
                   } else if (plan.name === "Enterprise") {
                     window.location.assign("https://wa.me/6285754494990?text=Halo%20Dokumenku%20AI%2C%20saya%20tertarik%20dengan%20paket%20Enterprise.");

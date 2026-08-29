@@ -177,11 +177,12 @@ Jika gambar buram/bukan struk, isi "extracted_code": "IMAGE_UNREADABLE".`;
     let primaryErrorCode: string | null = null;
 
     const rawAmountDigits = (extracted.amount || "").replace(/[^0-9]/g, "");
-    if (rawAmountDigits && rawAmountDigits !== "20000") {
+    if (rawAmountDigits) {
       const parsedNum = parseInt(rawAmountDigits, 10);
-      if (parsedNum !== EXPECTED_AMOUNT) {
+      if (parsedNum !== order.amount) {
         primaryErrorCode = ERROR_CODES.PAYMENT_AMOUNT_MISMATCH;
-        validationErrors.push(`Nominal struk terdeteksi (${extracted.amount}) tidak sesuai dengan nominal tagihan (Rp 20.000).`);
+        const expectedFormatted = order.amount === 75000 ? "Rp 75.000" : "Rp 20.000";
+        validationErrors.push(`Nominal struk terdeteksi (${extracted.amount}) tidak sesuai dengan nominal tagihan (${expectedFormatted}).`);
       }
     }
 
