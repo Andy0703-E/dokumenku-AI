@@ -19,6 +19,7 @@ import {
   AlertTriangle,
 } from "lucide-react";
 import { toast } from "sonner";
+import { generateDeviceFingerprint } from "@/lib/device-fingerprint";
 
 type AuthMode = "login" | "register";
 
@@ -85,10 +86,14 @@ export default function AuthPanel({ initialMode = "login" }: AuthPanelProps) {
     const endpoint = mode === "login" ? "/api/auth/login" : "/api/auth/register";
 
     try {
+      let deviceFingerprint: string | undefined;
+      if (mode === "register") {
+        deviceFingerprint = await generateDeviceFingerprint();
+      }
       const response = await fetch(endpoint, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email: email.trim().toLowerCase(), password }),
+        body: JSON.stringify({ email: email.trim().toLowerCase(), password, deviceFingerprint }),
       });
 
       const payload = (await response.json()) as {
@@ -367,7 +372,7 @@ export default function AuthPanel({ initialMode = "login" }: AuthPanelProps) {
               ) : (
                 <>
                   <UserPlus size={18} />
-                  Daftar & Klaim 3 Kredit
+                  Daftar & Klaim 1 Kredit
                 </>
               )}
             </button>

@@ -114,9 +114,11 @@ async function ensureSchema(db: Client): Promise<void> {
       password_salt TEXT NOT NULL,
       available_credits INTEGER NOT NULL DEFAULT 0,
       reserved_credits INTEGER NOT NULL DEFAULT 0,
+      device_fingerprint TEXT,
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL
     )`,
+    `CREATE UNIQUE INDEX IF NOT EXISTS idx_users_device_fingerprint ON users(device_fingerprint) WHERE device_fingerprint IS NOT NULL`,
     `CREATE TABLE IF NOT EXISTS admins (
       id TEXT PRIMARY KEY,
       email TEXT UNIQUE NOT NULL,
@@ -260,6 +262,7 @@ async function ensureSchema(db: Client): Promise<void> {
     `CREATE UNIQUE INDEX IF NOT EXISTS uq_audit_sequence ON audit_logs(sequence)`,
     `CREATE UNIQUE INDEX IF NOT EXISTS uq_credit_payment_order ON credit_transactions(order_id, type) WHERE order_id IS NOT NULL`,
     `CREATE UNIQUE INDEX IF NOT EXISTS uq_webhook_event ON webhook_events(provider, external_event_id)`,
+    `ALTER TABLE users ADD COLUMN device_fingerprint TEXT`,
   ];
 
   for (const sql of statements) {

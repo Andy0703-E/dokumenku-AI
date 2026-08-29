@@ -277,7 +277,7 @@ export default function LandingPage({ onStart }: LandingPageProps) {
 
           <div className="trust-points-row">
             <span className="trust-check">
-              <Check size={16} strokeWidth={3} /> Mulai Rp 20.000
+              <Check size={16} strokeWidth={3} /> 1 Kredit Gratis Starter
             </span>
             <span style={{ color: "var(--text-faint)" }}>•</span>
             <span>Tanpa Langganan</span>

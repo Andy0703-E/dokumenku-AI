@@ -2,12 +2,20 @@ import { NextResponse } from "next/server";
 import { getDatabase } from "@/db";
 import { getCurrentAdmin } from "@/lib/auth";
 import { classifyModel, getCachedModels, setCachedModels, type ModelItem } from "@/lib/models-config";
+import { bootstrapModelHealth } from "@/app/api/admin/model-health/route";
 
 const PROVIDER_BASE_URL = "https://bandelbanget.xyz/v1";
+
+let bootstrapped = false;
 
 export async function GET() {
   if (!(await getCurrentAdmin())) {
     return NextResponse.json({ error: "Masuk sebagai admin diperlukan." }, { status: 403 });
+  }
+
+  if (!bootstrapped) {
+    bootstrapModelHealth();
+    bootstrapped = true;
   }
 
   try {
@@ -16,7 +24,7 @@ export async function GET() {
     const userCount = userCountResult.rows[0] as unknown as { value: number } | undefined;
     const creditsResult = await db.execute("SELECT COALESCE(SUM(available_credits), 0) AS value FROM users");
     const credits = creditsResult.rows[0] as unknown as { value: number } | undefined;
-    const generationCountResult = await db.execute("SELECT COUNT(*) AS value FROM document_generations WHERE status = 'completed'");
+    const generationCountResult = await db.execute("SELECT COUNT(*) AS value FROM document_generations WHERE status = 'COMPLETED'");
     const generationCount = generationCountResult.rows[0] as unknown as { value: number } | undefined;
     const usersResult = await db.execute("SELECT email, available_credits AS credits, updated_at AS updatedAt FROM users ORDER BY updated_at DESC LIMIT 30");
     const users = usersResult.rows as unknown as Array<{ email: string; credits: number; updatedAt: string }>;

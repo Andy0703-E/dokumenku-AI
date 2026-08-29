@@ -9,22 +9,35 @@ function validate(email: string, password: string): string | null {
 }
 
 export async function POST(request: NextRequest) {
-  const { email: rawEmail, password } = await request.json() as unknown as { email?: string; password?: string };
+  const { email: rawEmail, password, deviceFingerprint } = await request.json() as unknown as { email?: string; password?: string; deviceFingerprint?: string };
   const email = rawEmail?.trim().toLowerCase() ?? "";
   const validationError = validate(email, password ?? "");
   if (validationError) return NextResponse.json({ error: validationError }, { status: 400 });
 
   try {
     const db = await getDatabase();
+
+    if (deviceFingerprint && typeof deviceFingerprint === "string" && deviceFingerprint.length === 64) {
+      const existingDevice = await db.execute({
+        sql: "SELECT email FROM users WHERE device_fingerprint = ? LIMIT 1",
+        args: [deviceFingerprint],
+      });
+      if (existingDevice.rows[0]) {
+        const existingEmail = (existingDevice.rows[0] as unknown as { email: string }).email;
+        return NextResponse.json({ error: `Perangkat ini sudah terdaftar dengan akun ${existingEmail}. Silakan masuk instead.` }, { status: 409 });
+      }
+    }
+
     const existsResult = await db.execute({ sql: "SELECT email FROM users WHERE email = ?", args: [email] });
     if (existsResult.rows[0]) return NextResponse.json({ error: "Email ini sudah terdaftar. Silakan masuk." }, { status: 409 });
 
     const { hash, salt } = hashPassword(password ?? "");
     const now = new Date().toISOString();
-    const initialCredits = Math.max(0, Math.min(100, Number.parseInt(process.env.INITIAL_CREDITS ?? "3", 10) || 0));
+    const initialCredits = Math.max(0, Math.min(100, Number.parseInt(process.env.INITIAL_CREDITS ?? "1", 10) || 1));
+    const fp = deviceFingerprint && typeof deviceFingerprint === "string" && deviceFingerprint.length === 64 ? deviceFingerprint : null;
     await db.execute({
-      sql: "INSERT INTO users (email, password_hash, password_salt, available_credits, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)",
-      args: [email, hash, salt, initialCredits, now, now],
+      sql: "INSERT INTO users (email, password_hash, password_salt, available_credits, device_fingerprint, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+      args: [email, hash, salt, initialCredits, fp, now, now],
     });
     if (initialCredits > 0) {
       await db.execute({
