@@ -912,7 +912,7 @@ export async function reserveCredits(
   {
     userEmail,
     generationId,
-    amount = 25,
+    amount = 1,
     documentType,
     projectId = "default_project",
     expiresInMinutes = 15,

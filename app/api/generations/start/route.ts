@@ -74,7 +74,7 @@ export async function POST(request: NextRequest) {
       const resResult = await reserveCredits(db, {
         userEmail: user.email,
         generationId,
-        amount: 25,
+        amount: 1,
         documentType,
       });
 
@@ -96,7 +96,7 @@ export async function POST(request: NextRequest) {
       return apiSuccess({
         generationId,
         credits: resResult.remainingCredits,
-        reservedCredits: 25,
+        reservedCredits: 1,
         documentType,
         authenticated: true,
       }, 201, requestId);

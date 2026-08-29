@@ -76,7 +76,7 @@ export async function POST(request: NextRequest) {
         });
         if ((settleResult.rowsAffected ?? 0) > 0) {
           await db.execute({
-            sql: `UPDATE users SET reserved_credits = MAX(0, COALESCE(reserved_credits, 0) - 25), updated_at = ? WHERE email = ?`,
+            sql: `UPDATE users SET reserved_credits = MAX(0, COALESCE(reserved_credits, 0) - 1), updated_at = ? WHERE email = ?`,
             args: [now, user.email],
           });
         }
