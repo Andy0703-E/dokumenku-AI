@@ -47,7 +47,13 @@ export async function POST(request: NextRequest) {
       const querySecret = request.nextUrl.searchParams.get("secret");
       const payloadSecret = String(payload.secret || payload.token || "");
       const providedSecret = headerSecret || querySecret || payloadSecret;
-      if (!providedSecret || providedSecret !== expectedSecret) {
+      if (!providedSecret) {
+        console.warn("[WA WEBHOOK] Ditolak: Signature/Secret webhook tidak valid.");
+        return NextResponse.json({ error: "Unauthorized webhook signature." }, { status: 401 });
+      }
+      const a = Buffer.from(providedSecret);
+      const b = Buffer.from(expectedSecret);
+      if (a.length !== b.length || !require("node:crypto").timingSafeEqual(a, b)) {
         console.warn("[WA WEBHOOK] Ditolak: Signature/Secret webhook tidak valid.");
         return NextResponse.json({ error: "Unauthorized webhook signature." }, { status: 401 });
       }

@@ -121,5 +121,12 @@ export async function POST(request: NextRequest) {
     return apiError(ERROR_CODES.CREDIT_INSUFFICIENT, "Kredit starter gratis Anda telah habis. Silakan masuk atau daftar akun.", 402, requestId);
   }
 
-  return apiSuccess({ generationId, credits: guestCredits, documentType, authenticated: false }, 201, requestId);
+  const guestResponse = apiSuccess({ generationId, credits: guestCredits - 1, documentType, authenticated: false }, 201, requestId);
+  guestResponse.cookies.set("dokumenku_guest", String(guestCredits - 1), {
+    httpOnly: true,
+    sameSite: "lax",
+    maxAge: 60 * 60 * 24 * 30,
+    path: "/",
+  });
+  return guestResponse;
 }

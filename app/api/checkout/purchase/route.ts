@@ -11,29 +11,66 @@ export async function POST(request: NextRequest) {
     );
   }
 
-  const { plan = "pro" } = (await request.json().catch(() => ({}))) as unknown as unknown as { plan?: string };
+  const { orderId } = (await request.json().catch(() => ({}))) as unknown as { orderId?: string };
+
+  if (!orderId || typeof orderId !== "string") {
+    return NextResponse.json(
+      { error: "ID pesanan wajib disertakan." },
+      { status: 400 },
+    );
+  }
 
   try {
     const db = await getDatabase();
     const now = new Date().toISOString();
-    const creditBonus = plan === "pro" ? 100 : 100;
 
-    const updateRes = await db.execute({
-      sql: "UPDATE users SET available_credits = available_credits + ?, updated_at = ? WHERE email = ?",
-      args: [creditBonus, now, user.email],
+    const orderResult = await db.execute({
+      sql: "SELECT * FROM orders WHERE id = ? AND user_email = ?",
+      args: [orderId, user.email],
     });
+    const order = orderResult.rows[0] as unknown as
+      | { id: string; status: string; credits: number }
+      | undefined;
 
-    if (updateRes.rowsAffected !== 1) {
-      await db.execute({
-        sql: "INSERT INTO users (email, password_hash, password_salt, available_credits, created_at, updated_at) VALUES (?, 'oauth', 'oauth', ?, ?, ?)",
-        args: [user.email, creditBonus, now, now],
-      });
+    if (!order) {
+      return NextResponse.json({ error: "Pesanan tidak ditemukan." }, { status: 404 });
     }
 
-    await db.execute({
-      sql: "INSERT INTO credit_transactions (user_email, amount, reason, created_at) VALUES (?, ?, 'Pembelian Paket Pro Studio (100 Kredit)', ?)",
-      args: [user.email, creditBonus, now],
-    });
+    if (order.status === "COMPLETED" || order.status === "PAID") {
+      return NextResponse.json({ ok: true, message: "Pesanan sudah diproses sebelumnya.", orderId });
+    }
+
+    if (order.status !== "APPROVED") {
+      return NextResponse.json(
+        { error: "Pesanan belum disetujui admin. Silakan upload bukti pembayaran dan tunggu persetujuan." },
+        { status: 400 },
+      );
+    }
+
+    const creditBonus = order.credits || 100;
+
+    const tx = await db.transaction("write");
+    try {
+      await tx.execute({
+        sql: "UPDATE users SET available_credits = available_credits + ?, updated_at = ? WHERE email = ?",
+        args: [creditBonus, now, user.email],
+      });
+
+      await tx.execute({
+        sql: "UPDATE orders SET status = 'COMPLETED', paid_at = ? WHERE id = ?",
+        args: [now, orderId],
+      });
+
+      await tx.execute({
+        sql: "INSERT INTO credit_transactions (user_email, amount, reason, order_id, type, created_at) VALUES (?, ?, ?, ?, 'PURCHASE', ?)",
+        args: [user.email, creditBonus, `Pembelian ${order.id}`, orderId, now],
+      });
+
+      await tx.commit();
+    } catch (err) {
+      await tx.rollback();
+      throw err;
+    }
 
     const accountResult = await db.execute({ sql: "SELECT available_credits FROM users WHERE email = ?", args: [user.email] });
     const account = accountResult.rows[0] as unknown as { available_credits: number } | undefined;

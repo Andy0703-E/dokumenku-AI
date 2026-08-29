@@ -11,14 +11,13 @@ export async function POST(request: NextRequest) {
     );
   }
 
-  const { orderId } = (await request.json().catch(() => ({}))) as unknown as unknown as { orderId?: string };
+  const { orderId } = (await request.json().catch(() => ({}))) as unknown as { orderId?: string };
   if (!orderId) {
     return NextResponse.json({ error: "ID pesanan tidak valid." }, { status: 400 });
   }
 
   try {
     const db = await getDatabase();
-    const now = new Date().toISOString();
 
     const orderResult = await db.execute({ sql: "SELECT * FROM orders WHERE id = ?", args: [orderId] });
     const order = orderResult.rows[0] as unknown as
@@ -29,42 +28,23 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "Pesanan tidak ditemukan." }, { status: 404 });
     }
 
-    if (order.user_email !== user.email && user.role !== "admin") {
-      return NextResponse.json({ error: "Anda tidak memiliki izin memverifikasi pesanan ini." }, { status: 403 });
+    if (order.user_email !== user.email) {
+      return NextResponse.json({ error: "Anda tidak memiliki izin melihat pesanan ini." }, { status: 403 });
     }
 
-    if (order.status === "paid") {
-      return NextResponse.json({ ok: true, alreadyPaid: true, message: "Pesanan ini sudah berhasil diverifikasi sebelumnya." });
-    }
-
-    await db.execute({ sql: "UPDATE orders SET status = 'paid', paid_at = ? WHERE id = ?", args: [now, orderId] });
-
-    const creditBonus = order.credits;
-    const updateRes = await db.execute({
-      sql: "UPDATE users SET available_credits = available_credits + ?, updated_at = ? WHERE email = ?",
-      args: [creditBonus, now, order.user_email],
-    });
-
-    if (updateRes.rowsAffected !== 1) {
-      await db.execute({
-        sql: "INSERT INTO users (email, password_hash, password_salt, available_credits, created_at, updated_at) VALUES (?, 'oauth', 'oauth', ?, ?, ?)",
-        args: [order.user_email, creditBonus, now, now],
-      });
-    }
-
-    await db.execute({
-      sql: "INSERT INTO credit_transactions (user_email, amount, reason, created_at) VALUES (?, ?, ?, ?)",
-      args: [order.user_email, creditBonus, `Pembelian ${order.plan_name} (${orderId})`, now],
-    });
-
-    const accountResult = await db.execute({ sql: "SELECT available_credits FROM users WHERE email = ?", args: [order.user_email] });
+    const accountResult = await db.execute({ sql: "SELECT available_credits FROM users WHERE email = ?", args: [user.email] });
     const account = accountResult.rows[0] as unknown as { available_credits: number } | undefined;
 
     return NextResponse.json({
       ok: true,
-      credits: account?.available_credits ?? creditBonus,
-      isPro: true,
-      message: `Pembayaran berhasil diverifikasi! +${creditBonus} Kredit Pro Studio telah aktif.`,
+      orderId: order.id,
+      status: order.status,
+      credits: account?.available_credits ?? 0,
+      message: order.status === "COMPLETED" || order.status === "PAID"
+        ? "Pesanan sudah berhasil diproses."
+        : order.status === "APPROVED"
+          ? "Pesanan disetujui. Silakan hubungi admin untuk klaim kredit."
+          : `Status pesanan: ${order.status}. Menunggu persetujuan admin.`,
     });
   } catch (error) {
     return NextResponse.json(

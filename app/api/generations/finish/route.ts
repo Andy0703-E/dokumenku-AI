@@ -70,20 +70,27 @@ export async function POST(request: NextRequest) {
       }
 
       if (completed && (!content || content.trim().length <= 50)) {
-        const settleResult = await db.execute({
-          sql: `UPDATE credit_reservations SET status = 'CAPTURED', settled_at = ? WHERE generation_id = ? AND status = 'RESERVED'`,
-          args: [now, generationId],
-        });
-        if ((settleResult.rowsAffected ?? 0) > 0) {
-          await db.execute({
-            sql: `UPDATE users SET reserved_credits = MAX(0, COALESCE(reserved_credits, 0) - 1), updated_at = ? WHERE email = ?`,
-            args: [now, user.email],
+        const tx = await db.transaction("write");
+        try {
+          const settleResult = await tx.execute({
+            sql: `UPDATE credit_reservations SET status = 'CAPTURED', settled_at = ? WHERE generation_id = ? AND status = 'RESERVED'`,
+            args: [now, generationId],
           });
+          if ((settleResult.rowsAffected ?? 0) > 0) {
+            await tx.execute({
+              sql: `UPDATE users SET reserved_credits = MAX(0, COALESCE(reserved_credits, 0) - 1), updated_at = ? WHERE email = ?`,
+              args: [now, user.email],
+            });
+          }
+          await tx.execute({
+            sql: "UPDATE document_generations SET status = 'COMPLETED', completed_at = ? WHERE id = ? AND user_email = ?",
+            args: [now, generationId, user.email],
+          });
+          await tx.commit();
+        } catch (err) {
+          await tx.rollback();
+          throw err;
         }
-        await db.execute({
-          sql: "UPDATE document_generations SET status = 'COMPLETED', completed_at = ? WHERE id = ? AND user_email = ?",
-          args: [now, generationId, user.email],
-        });
         const userRow = await db.execute({
           sql: "SELECT available_credits, reserved_credits FROM users WHERE email = ?",
           args: [user.email],

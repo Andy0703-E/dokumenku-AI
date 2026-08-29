@@ -185,6 +185,20 @@ export function useDocumentGenerator() {
 
           currentFiles = { ...currentFiles, [step]: completedOutput };
           setFiles(currentFiles);
+
+          const docType = step.replace(".md", "") as "PRD" | "TECH-STACK" | "UI-UX" | "SCHEMA";
+          const docTypeMap: Record<string, string> = { "PRD": "PRD", "TECH-STACK": "TECH_SPEC", "UI-UX": "UI_UX", "SCHEMA": "AI_CONTEXT" };
+          await fetch("/api/generations/finish", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              generationId,
+              completed: true,
+              documentType: docTypeMap[docType] || "PRD",
+              fileName: step,
+              content: completedOutput,
+            }),
+          }).catch(() => {});
         }
 
         completed = true;
@@ -197,11 +211,11 @@ export function useDocumentGenerator() {
         return false;
       } finally {
         setIsGenerating(false);
-        if (generationId) {
+        if (generationId && !completed) {
           await fetch("/api/generations/finish", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ generationId, completed }),
+            body: JSON.stringify({ generationId, completed: false, failureReason: "generation_failed" }),
           }).catch(() => {});
         }
       }

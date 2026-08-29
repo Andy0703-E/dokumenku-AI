@@ -177,7 +177,8 @@ async function ensureSchema(db: Client): Promise<void> {
       ocr_raw_result TEXT,
       created_at TEXT NOT NULL,
       expires_at TEXT,
-      paid_at TEXT
+      paid_at TEXT,
+      updated_at TEXT
     )`,
     `CREATE TABLE IF NOT EXISTS verified_transactions (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -874,7 +875,12 @@ export async function verifyAdminInDatabase(
         };
         console.log(`[ADMIN BOOTSTRAP] Akun administrator pertama (${normEmail}) berhasil di-bootstrap ke database.`);
       } catch {
-        // Handled by concurrency
+        // Race condition: another request already inserted. Re-query.
+        const retryResult = await db.execute({
+          sql: "SELECT * FROM admins WHERE LOWER(email) = LOWER(?)",
+          args: [normEmail],
+        });
+        admin = retryResult.rows[0] as unknown as typeof admin;
       }
     }
   } else if (process.env.ADMIN_BOOTSTRAP_PASSWORD) {
