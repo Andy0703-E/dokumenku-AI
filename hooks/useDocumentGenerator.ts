@@ -24,7 +24,10 @@ function minimumCharacters(file: FileName): number {
   return file === "PRD.md" ? 3_000 : 2_200;
 }
 
-export function useDocumentGenerator() {
+export function useDocumentGenerator(
+  projectId: string = "default_project",
+  projectName: string = "",
+) {
   const [files, setFiles] = useState<GeneratedFiles>(EMPTY_FILES);
   const [isGenerating, setIsGenerating] = useState(false);
   const [progress, setProgress] = useState(0);
@@ -126,7 +129,7 @@ export function useDocumentGenerator() {
         const startResponse = await fetch("/api/generations/start", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ selectedModel, prompt: brief }),
+          body: JSON.stringify({ selectedModel, prompt: brief, projectId, projectName }),
         });
         const startPayload = (await startResponse.json()) as unknown as { data?: { generationId?: string }; generationId?: string; error?: string };
         const resolvedGenerationId = startPayload.data?.generationId ?? startPayload.generationId;
@@ -199,6 +202,9 @@ export function useDocumentGenerator() {
               documentType: docTypeMap[docType] || "PRD",
               fileName: step,
               content: completedOutput,
+              projectId,
+              projectName,
+              selectedModel,
             }),
           }).catch(() => {});
         }

@@ -21,11 +21,13 @@ export async function POST(request: NextRequest) {
     selectedModel,
     prompt,
     projectId = "default_project",
+    projectName = "",
     documentType = "PRD",
   } = (await request.json().catch(() => ({}))) as unknown as {
     selectedModel?: string;
     prompt?: string;
     projectId?: string;
+    projectName?: string;
     documentType?: "PRD" | "TECH_SPEC" | "UI_UX" | "AI_CONTEXT";
   };
 

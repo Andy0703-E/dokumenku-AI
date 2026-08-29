@@ -496,7 +496,7 @@ export default function AccountProfilePage() {
 
                       <div>
                         <a
-                          href={gen.prompt ? `/studio?prompt=${encodeURIComponent(gen.prompt)}` : "/studio"}
+                          href="/studio"
                           className="btn-primary"
                           style={{ minHeight: "34px", padding: "0 14px", fontSize: "0.78rem" }}
                         >

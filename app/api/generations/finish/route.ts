@@ -23,6 +23,8 @@ export async function POST(request: NextRequest) {
     completed,
     documentType = "PRD",
     projectId = "default_project",
+    projectName = "",
+    selectedModel = "",
     fileName = "document.md",
     content = "",
     failureReason,
@@ -31,6 +33,8 @@ export async function POST(request: NextRequest) {
     completed?: boolean;
     documentType?: "PRD" | "TECH_SPEC" | "UI_UX" | "AI_CONTEXT" | "ALL_DONE";
     projectId?: string;
+    projectName?: string;
+    selectedModel?: string;
     fileName?: string;
     content?: string;
     failureReason?: string;
@@ -71,6 +75,8 @@ export async function POST(request: NextRequest) {
         const finalizationResult = await executeAtomicDocumentFinalization(db, {
           userEmail: user.email,
           projectId,
+          projectName,
+          selectedModel,
           documentType,
           fileName,
           content,

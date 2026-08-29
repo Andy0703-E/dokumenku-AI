@@ -273,6 +273,8 @@ async function ensureSchema(db: Client): Promise<void> {
     `CREATE UNIQUE INDEX IF NOT EXISTS uq_credit_payment_order ON credit_transactions(order_id, type) WHERE order_id IS NOT NULL`,
     `CREATE UNIQUE INDEX IF NOT EXISTS uq_webhook_event ON webhook_events(provider, external_event_id)`,
     `ALTER TABLE users ADD COLUMN device_fingerprint TEXT`,
+    `ALTER TABLE project_documents ADD COLUMN project_name TEXT DEFAULT ''`,
+    `ALTER TABLE project_documents ADD COLUMN selected_model TEXT DEFAULT ''`,
   ];
 
   for (const sql of statements) {
@@ -1127,6 +1129,8 @@ export async function executeAtomicDocumentFinalization(
   {
     userEmail,
     projectId,
+    projectName,
+    selectedModel,
     documentType,
     fileName,
     content,
@@ -1134,6 +1138,8 @@ export async function executeAtomicDocumentFinalization(
   }: {
     userEmail: string;
     projectId: string;
+    projectName?: string;
+    selectedModel?: string;
     documentType: "PRD" | "TECH_SPEC" | "UI_UX" | "AI_CONTEXT";
     fileName: string;
     content: string;
@@ -1178,14 +1184,16 @@ export async function executeAtomicDocumentFinalization(
 
   // ── Save Document Only (no credit mutations) ─────────────────────
   await db.execute({
-    sql: `INSERT INTO project_documents (user_email, project_id, document_type, file_name, content, status, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, 'COMPLETED', ?, ?)
+    sql: `INSERT INTO project_documents (user_email, project_id, project_name, selected_model, document_type, file_name, content, status, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, 'COMPLETED', ?, ?)
       ON CONFLICT(user_email, project_id, document_type) DO UPDATE SET
+        project_name = CASE WHEN excluded.project_name != '' THEN excluded.project_name ELSE project_documents.project_name END,
+        selected_model = CASE WHEN excluded.selected_model != '' THEN excluded.selected_model ELSE project_documents.selected_model END,
         file_name = excluded.file_name,
         content = excluded.content,
         status = 'COMPLETED',
         updated_at = excluded.updated_at`,
-    args: [normEmail, projectId, documentType, fileName, content, now, now],
+    args: [normEmail, projectId, projectName || "", selectedModel || "", documentType, fileName, content, now, now],
   });
 
   return { ok: true };
@@ -1350,4 +1358,45 @@ export async function checkProjectDependencies(
   }
 
   return { ok: true };
+}
+
+// ─── Project Listing ────────────────────────────────────────────────
+
+export type ProjectSummary = {
+  projectId: string;
+  projectName: string;
+  selectedModel: string;
+  docCount: number;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export async function getUserProjects(
+  db: Client,
+  userEmail: string,
+): Promise<ProjectSummary[]> {
+  const normEmail = userEmail.trim().toLowerCase();
+  const result = await db.execute({
+    sql: `SELECT
+        project_id,
+        COALESCE(MAX(project_name), '') AS project_name,
+        COALESCE(MAX(selected_model), '') AS selected_model,
+        COUNT(*) AS doc_count,
+        MIN(created_at) AS created_at,
+        MAX(updated_at) AS updated_at
+      FROM project_documents
+      WHERE LOWER(user_email) = ?
+      GROUP BY project_id
+      ORDER BY MAX(updated_at) DESC`,
+    args: [normEmail],
+  });
+
+  return result.rows.map((row) => ({
+    projectId: row.project_id as string,
+    projectName: (row.project_name as string) || "",
+    selectedModel: (row.selected_model as string) || "",
+    docCount: Number(row.doc_count) || 0,
+    createdAt: row.created_at as string,
+    updatedAt: row.updated_at as string,
+  }));
 }
