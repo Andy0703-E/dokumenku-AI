@@ -59,8 +59,8 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    const rawSender = String(payload.sender || payload.from || payload.phone || "");
-    const rawMessage = String(payload.message || payload.body || payload.text || "").trim();
+    const rawSender = String(payload.sender || payload.from || payload.phone || payload.number || "");
+    const rawMessage = String(payload.message || payload.body || payload.text || payload.data || "").trim();
 
     if (!rawSender || !rawMessage) {
       return NextResponse.json({ ok: false, error: "Empty sender or message payload" }, { status: 400 });
@@ -112,11 +112,19 @@ export async function POST(request: NextRequest) {
     const parts = rawMessage.split(/\s+/).filter(Boolean);
     const command = parts[0]?.toUpperCase();
 
+    console.log(`[WA WEBHOOK] sender=${sender} message="${rawMessage}" command=${command}`);
+
+    // ── Handle 'TEST' Command ──────────────────────────────────────
+    if (command === "TEST") {
+      await sendWhatsAppMessage(sender, "✅ Webhook aktif! Bot siap menerima perintah.").catch(() => {});
+      return NextResponse.json({ ok: true, test: true });
+    }
+
     // ── Handle Chat Reply: #<chatId> <reply> or BALAS <chatId> <reply> ──
-    const chatReplyMatch = rawMessage.match(/^(?:#(\d+)|BALAS\s+(\d+))\s+([\s\S]+)$/i);
+    const chatReplyMatch = rawMessage.match(/(?:^|\s)#(\d+)\s+([\s\S]+)/i) || rawMessage.match(/BALAS\s+(\d+)\s+([\s\S]+)/i);
     if (chatReplyMatch) {
-      const chatId = Number(chatReplyMatch[1] || chatReplyMatch[2]);
-      const replyText = (chatReplyMatch[3] || "").trim();
+      const chatId = Number(chatReplyMatch[1]);
+      const replyText = (chatReplyMatch[2] || "").trim();
 
       if (!chatId || !replyText) {
         await sendWhatsAppMessage(sender, "⚠️ Format: *#<ID> <pesan balasan>* atau *BALAS <ID> <pesan>*").catch(() => {});
