@@ -105,28 +105,5 @@ export async function POST(request: NextRequest) {
     }
   }
 
-  // Guest Mode
-  if (isFlagship) {
-    return apiError(ERROR_CODES.AUTH_FORBIDDEN, "Model Flagship eksklusif untuk akun Pro Studio.", 403, requestId);
-  }
-
-  let guestCredits = 3;
-  const guestCookie = cookieStore.get("dokumenku_guest")?.value;
-  if (guestCookie !== undefined) {
-    const parsed = Number.parseInt(guestCookie, 10);
-    if (!Number.isNaN(parsed)) guestCredits = Math.max(0, parsed);
-  }
-
-  if (guestCredits <= 0) {
-    return apiError(ERROR_CODES.CREDIT_INSUFFICIENT, "Kredit starter gratis Anda telah habis. Silakan masuk atau daftar akun.", 402, requestId);
-  }
-
-  const guestResponse = apiSuccess({ generationId, credits: guestCredits - 1, documentType, authenticated: false }, 201, requestId);
-  guestResponse.cookies.set("dokumenku_guest", String(guestCredits - 1), {
-    httpOnly: true,
-    sameSite: "lax",
-    maxAge: 60 * 60 * 24 * 30,
-    path: "/",
-  });
-  return guestResponse;
+  return apiError(ERROR_CODES.AUTH_FORBIDDEN, "Silakan masuk atau daftar akun terlebih dahulu.", 401, requestId);
 }

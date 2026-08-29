@@ -134,24 +134,5 @@ export async function POST(request: NextRequest) {
     }
   }
 
-  // Guest Mode Handling
-  if (!completed && failureReason) {
-    let guestCredits = 0;
-    const guestCookie = cookieStore.get("dokumenku_guest")?.value;
-    if (guestCookie !== undefined) {
-      const parsed = Number.parseInt(guestCookie, 10);
-      if (!Number.isNaN(parsed)) guestCredits = parsed;
-    }
-    const refundedCredits = Math.min(3, guestCredits + 1);
-    const response = apiSuccess({ ok: true, refunded: true }, 200, requestId);
-    response.cookies.set("dokumenku_guest", String(refundedCredits), {
-      httpOnly: true,
-      sameSite: "lax",
-      maxAge: 60 * 60 * 24 * 30,
-      path: "/",
-    });
-    return response;
-  }
-
-  return apiSuccess({ status: "COMPLETED", generationId }, 200, requestId);
+  return apiError(ERROR_CODES.AUTH_FORBIDDEN, "Silakan masuk atau daftar akun terlebih dahulu.", 401, requestId);
 }
