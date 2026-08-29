@@ -13,8 +13,8 @@ import {
   Mail,
   ArrowUpRight,
   User,
-  Sparkles,
-  Zap,
+  FileText,
+  ArrowRight,
   Loader2,
   CheckCircle2,
   QrCode,
@@ -537,7 +537,7 @@ export default function PricingPage() {
                     className="btn-primary"
                     style={{ minHeight: "42px", padding: "0 22px", fontSize: "0.9rem" }}
                   >
-                    <Sparkles size={15} /> Mulai Bikin Dokumen di Studio
+                     <FileText size={15} /> Mulai Bikin Dokumen di Studio
                   </a>
                   <a
                     href="/account"

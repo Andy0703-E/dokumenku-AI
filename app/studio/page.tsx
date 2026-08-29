@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState, useCallback } from "react";
-import { FolderOpen, Plus, Sparkles, FileText, Clock, ArrowRight, Trash2 } from "lucide-react";
+import { FolderOpen, Plus, FileText, Clock, ArrowRight, Trash2 } from "lucide-react";
 
 type Project = {
   projectId: string;
@@ -101,7 +101,7 @@ export default function StudioPage() {
                 gap: "10px",
               }}
             >
-              <Sparkles size={24} color="var(--cobalt, #2563EB)" />
+              <FileText size={24} color="var(--cobalt, #2563EB)" />
               Studio Dokumen
             </h1>
             <p
@@ -534,7 +534,7 @@ export default function StudioPage() {
                   </>
                 ) : (
                   <>
-                    <Sparkles size={14} /> Mulai
+                    <FileText size={14} /> Mulai
                   </>
                 )}
               </button>

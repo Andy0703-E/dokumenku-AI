@@ -7,7 +7,6 @@ import {
   Coins,
   FileText,
   Clock,
-  Sparkles,
   Shield,
   LogOut,
   ArrowRight,
@@ -16,7 +15,7 @@ import {
   Calendar,
   CheckCircle2,
   Tag,
-  Zap,
+  CheckCircle,
 } from "lucide-react";
 import { toast } from "sonner";
 
@@ -119,7 +118,7 @@ export default function AccountProfilePage() {
                 <User size={14} /> <span>Masuk</span>
               </a>
               <a href="/studio" className="btn-primary" style={{ minHeight: "34px", padding: "0 14px", fontSize: "0.82rem" }}>
-                <Sparkles size={13} /> Buka Studio
+                 <FileText size={13} /> Buka Studio
               </a>
             </div>
           </div>
@@ -196,7 +195,7 @@ export default function AccountProfilePage() {
         <div className="studio-navbar-actions">
           <div className="studio-quick-links">
             <a href="/studio" className="studio-action-link" title="Buka Studio Generator">
-              <Sparkles size={14} /> <span>Studio</span>
+               <FileText size={14} /> <span>Studio</span>
             </a>
 
             <a href="/pricing" className="studio-action-link" title="Paket & Harga">
@@ -358,7 +357,7 @@ export default function AccountProfilePage() {
           {/* Model AI Access */}
           <article className="admin-kpi-box purple">
             <div className="admin-kpi-icon-wrap purple">
-              <Zap size={24} />
+               <CheckCircle size={24} />
             </div>
             <div>
               <span className="kpi-label">Akses Engine Model AI</span>

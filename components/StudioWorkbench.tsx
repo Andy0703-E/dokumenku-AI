@@ -9,7 +9,7 @@ import {
   Coins,
   Cpu,
   ChevronDown,
-  Lightbulb,
+  Pencil,
   FileText,
   Clock,
   Download,
@@ -508,7 +508,7 @@ export default function StudioWorkbench({
             {/* Quick Inspiration Prompts */}
             <div className="quick-prompts-section">
               <div className="quick-prompts-label">
-                <Lightbulb size={14} color="var(--amber)" />
+                 <Pencil size={14} color="var(--amber)" />
                 <span>Contoh Prompt Cepat:</span>
               </div>
               <div className="quick-prompts-grid">

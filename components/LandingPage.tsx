@@ -9,7 +9,7 @@ import {
   Layers,
   Layout,
   Database,
-  Lightbulb,
+  Pencil,
   Cpu,
   Download,
   Check,
@@ -64,7 +64,7 @@ const WORKFLOW_STEPS = [
     num: "01",
     title: "Tuliskan Ide Proyek",
     desc: "Ceritakan ide, target pengguna, dan masalah yang ingin dipecahkan.",
-    icon: Lightbulb,
+    icon: Pencil,
     color: "blue",
   },
   {

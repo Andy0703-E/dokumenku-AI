@@ -23,8 +23,7 @@ import {
   Info,
   ChevronDown,
   Cpu,
-  Zap,
-  Sparkles,
+  CheckCircle,
   Receipt,
   QrCode,
   Check,
@@ -455,7 +454,7 @@ export default function AdminDashboard() {
                 className="btn-secondary admin-btn-action"
                 style={{ textDecoration: "none" }}
               >
-                <Sparkles size={14} /> <span>Studio</span>
+                 <FileText size={14} /> <span>Studio</span>
               </a>
               <a
                 href="/account"
@@ -671,7 +670,7 @@ export default function AdminDashboard() {
                     placeItems: "center",
                   }}
                 >
-                  <Zap size={20} />
+                   <CheckCircle size={20} />
                 </div>
                 <div>
                   <strong style={{ fontSize: "1.05rem", color: "var(--navy)", display: "block" }}>
