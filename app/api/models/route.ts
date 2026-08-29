@@ -55,7 +55,7 @@ export async function GET() {
       const classifiedList: ModelItem[] = payload.data
         .filter((m: { id?: string }) => {
           const id = (m.id ?? "").trim().toLowerCase();
-          return id && id !== "auto" && id !== "auto-debug";
+          return id && id !== "auto" && id !== "auto-debug" && id !== "hy3";
         })
         .map(
           (m: { id?: string; name?: string; display_name?: string }) => {

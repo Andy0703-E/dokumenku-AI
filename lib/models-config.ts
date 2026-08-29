@@ -41,7 +41,6 @@ const FLAGSHIP_PATTERNS = [
 
 const STARTER_EXCEPTIONS = [
   /^deepseek-v4-flash/i,
-  /^hy3$/i,
   /gpt-4o-mini/i,
   /gemini-1\.5-flash/i,
   /claude-3-5-haiku/i,

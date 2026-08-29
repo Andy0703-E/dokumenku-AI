@@ -287,49 +287,27 @@ async function ensureSchema(db: Client): Promise<void> {
 
   // ── One-time migration: split default_project into individual projects ──
   try {
-    const defaultDocs = await db.execute({
-      sql: `SELECT DISTINCT user_email, created_at FROM project_documents WHERE project_id = 'default_project' ORDER BY created_at`,
+    const check = await db.execute({
+      sql: `SELECT COUNT(*) as cnt FROM project_documents WHERE project_id = 'default_project'`,
+      args: [],
+    });
+    const cnt = Number(check.rows[0]?.cnt ?? 0);
+    if (cnt === 0) return;
+
+    const gens = await db.execute({
+      sql: `SELECT id, user_email, model, prompt FROM document_generations
+        WHERE project_id = 'default_project' ORDER BY created_at`,
       args: [],
     });
 
-    if (defaultDocs.rows.length > 0) {
-      // Group by user_email + minute
-      const groups = new Map<string, { user_email: string; created_at: string; models: string[]; prompts: string[] }>();
-      for (const row of defaultDocs.rows) {
-        const useremail = row.user_email as string;
-        const createdat = row.created_at as string;
-        const minuteKey = createdat.slice(0, 16); // "2026-08-29T14:03"
-        const groupKey = `${useremail}__${minuteKey}`;
-        if (!groups.has(groupKey)) {
-          groups.set(groupKey, { user_email: useremail, created_at: createdat, models: [], prompts: [] });
-        }
-      }
-
-      // For each group, find the matching document_generations row to get model + prompt
-      for (const [groupKey, group] of groups) {
-        const genResult = await db.execute({
-          sql: `SELECT model, prompt FROM document_generations
-            WHERE user_email = ? AND project_id = 'default_project'
-            AND created_at >= ? AND created_at < datetime(?, '+2 minutes')
-            LIMIT 1`,
-          args: [group.user_email, group.created_at, group.created_at],
-        });
-
-        const model = (genResult.rows[0]?.model as string) || "";
-        const prompt = (genResult.rows[0]?.prompt as string) || "";
-        const newProjectId = `proj_migrated_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
-
-        // Update all project_documents for this user+minute to the new project_id
-        await db.execute({
-          sql: `UPDATE project_documents
-            SET project_id = ?,
-                project_name = CASE WHEN project_name = '' OR project_name IS NULL THEN ? ELSE project_name END,
-                selected_model = CASE WHEN selected_model = '' OR selected_model IS NULL THEN ? ELSE selected_model END
-            WHERE user_email = ? AND project_id = 'default_project'
-            AND created_at >= ? AND created_at < datetime(?, '+2 minutes')`,
-          args: [newProjectId, prompt.slice(0, 200), model, group.user_email, group.created_at, group.created_at],
-        });
-      }
+    for (const gen of gens.rows) {
+      const newProjectId = `proj_${String(gen.id).replace(/^gen_/, "")}`;
+      await db.execute({
+        sql: `UPDATE project_documents
+          SET project_id = ?, project_name = ?, selected_model = ?
+          WHERE user_email = ? AND project_id = 'default_project'`,
+        args: [newProjectId, String(gen.prompt || "").slice(0, 200), String(gen.model || ""), gen.user_email],
+      });
     }
   } catch {
     // Migration already applied or table empty
@@ -1435,48 +1413,20 @@ export async function getUserProjects(
         MIN(created_at) AS created_at,
         MAX(updated_at) AS updated_at
       FROM project_documents
-      WHERE LOWER(user_email) = ? AND project_id != 'default_project'
+      WHERE LOWER(user_email) = ?
       GROUP BY project_id
       ORDER BY MAX(updated_at) DESC`,
     args: [normEmail],
   });
 
-  const projects = result.rows.map((row) => ({
-    projectId: row.project_id as string,
-    projectName: (row.project_name as string) || "",
-    selectedModel: (row.selected_model as string) || "",
-    docCount: Number(row.doc_count) || 0,
-    createdAt: row.created_at as string,
-    updatedAt: row.updated_at as string,
-  }));
-
-  // Safety net: if any default_project entries remain, show them individually
-  const defaultResult = await db.execute({
-    sql: `SELECT
-        created_at,
-        COALESCE(MAX(project_name), '') AS project_name,
-        COALESCE(MAX(selected_model), '') AS selected_model,
-        COUNT(*) AS doc_count,
-        MAX(updated_at) AS updated_at
-      FROM project_documents
-      WHERE LOWER(user_email) = ? AND project_id = 'default_project'
-      GROUP BY substr(created_at, 1, 16)
-      ORDER BY MAX(updated_at) DESC`,
-    args: [normEmail],
-  });
-
-  for (const row of defaultResult.rows) {
-    const ts = row.created_at as string;
-    const name = (row.project_name as string) || "Proyek Lama";
-    projects.push({
-      projectId: `proj_legacy_${ts.replace(/[^0-9]/g, "")}`,
-      projectName: name,
+  return result.rows
+    .filter((row) => (row.project_id as string) !== "default_project")
+    .map((row) => ({
+      projectId: row.project_id as string,
+      projectName: (row.project_name as string) || "",
       selectedModel: (row.selected_model as string) || "",
       docCount: Number(row.doc_count) || 0,
-      createdAt: ts,
-      updatedAt: (row.updated_at as string) || ts,
-    });
-  }
-
-  return projects;
+      createdAt: row.created_at as string,
+      updatedAt: row.updated_at as string,
+    }));
 }
