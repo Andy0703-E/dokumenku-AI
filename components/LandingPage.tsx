@@ -161,6 +161,7 @@ const FAQS = [
 export default function LandingPage({ onStart }: LandingPageProps) {
   const [openFaq, setOpenFaq] = useState<number | null>(null);
   const [isAuthenticated, setIsAuthenticated] = useState<boolean | null>(null);
+  const [stats, setStats] = useState<{ totalCredits: number; completedDocuments: number; totalUsers: number } | null>(null);
 
   useEffect(() => {
     fetch("/api/account")
@@ -171,6 +172,16 @@ export default function LandingPage({ onStart }: LandingPageProps) {
       .catch(() => {
         setIsAuthenticated(false);
       });
+    fetch("/api/stats")
+      .then((res) => res.json())
+      .then((payload: { totalCredits?: number; completedDocuments?: number; totalUsers?: number }) => {
+        setStats({
+          totalCredits: payload.totalCredits ?? 0,
+          completedDocuments: payload.completedDocuments ?? 0,
+          totalUsers: payload.totalUsers ?? 0,
+        });
+      })
+      .catch(() => {});
   }, []);
 
   function handleStartAction(prompt?: string) {
@@ -266,13 +277,30 @@ export default function LandingPage({ onStart }: LandingPageProps) {
 
           <div className="trust-points-row">
             <span className="trust-check">
-              <Check size={16} strokeWidth={3} /> 3 Kredit Gratis Starter
+              <Check size={16} strokeWidth={3} /> Mulai Rp 20.000
             </span>
             <span style={{ color: "var(--text-faint)" }}>•</span>
-            <span>Tanpa Kartu Kredit</span>
+            <span>Tanpa Langganan</span>
             <span style={{ color: "var(--text-faint)" }}>•</span>
-            <span>Ekspor ZIP & MD</span>
+            <span>Pakai Selamanya</span>
           </div>
+
+          {stats && (
+            <div style={{ display: "flex", gap: "24px", marginTop: "16px", flexWrap: "wrap" }}>
+              <div style={{ textAlign: "center" }}>
+                <div style={{ fontSize: "1.5rem", fontWeight: 700, color: "var(--cobalt)" }}>{stats.totalCredits.toLocaleString("id-ID")}</div>
+                <div style={{ fontSize: "0.75rem", color: "var(--text-muted)" }}>Kredit Beredar</div>
+              </div>
+              <div style={{ textAlign: "center" }}>
+                <div style={{ fontSize: "1.5rem", fontWeight: 700, color: "var(--cobalt)" }}>{stats.completedDocuments.toLocaleString("id-ID")}</div>
+                <div style={{ fontSize: "0.75rem", color: "var(--text-muted)" }}>Dokumen Selesai</div>
+              </div>
+              <div style={{ textAlign: "center" }}>
+                <div style={{ fontSize: "1.5rem", fontWeight: 700, color: "var(--cobalt)" }}>{stats.totalUsers.toLocaleString("id-ID")}</div>
+                <div style={{ fontSize: "0.75rem", color: "var(--text-muted)" }}>Total User</div>
+              </div>
+            </div>
+          )}
         </div>
 
         {/* Right Hero Column: Interactive Studio Preview Mockup */}
