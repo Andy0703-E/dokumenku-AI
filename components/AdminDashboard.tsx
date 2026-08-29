@@ -209,6 +209,13 @@ export default function AdminDashboard() {
   const [isReplying, setIsReplying] = useState<number | null>(null);
   const [isLoadingChat, setIsLoadingChat] = useState(false);
 
+  // ── Pagination State ────────────────────────────────────────────
+  const PAGE_SIZE = 10;
+  const [usersPage, setUsersPage] = useState(1);
+  const [ordersPage, setOrdersPage] = useState(1);
+  const [auditPage, setAuditPage] = useState(1);
+  const [chatPage, setChatPage] = useState(1);
+
   async function loadChatMessages() {
     setIsLoadingChat(true);
     try {
@@ -403,6 +410,9 @@ export default function AdminDashboard() {
     );
   }, [data?.users, searchUser]);
 
+  const usersTotalPages = Math.max(1, Math.ceil(filteredUsers.length / PAGE_SIZE));
+  const paginatedUsers = filteredUsers.slice((usersPage - 1) * PAGE_SIZE, usersPage * PAGE_SIZE);
+
   // Filtered transactions
   const filteredTransactions = useMemo(() => {
     if (!data?.transactions) return [];
@@ -410,6 +420,15 @@ export default function AdminDashboard() {
     if (txFilter === "deduct") return data.transactions.filter((t) => t.amount < 0);
     return data.transactions;
   }, [data?.transactions, txFilter]);
+
+  const ordersTotalPages = Math.max(1, Math.ceil((data?.orders?.length ?? 0) / PAGE_SIZE));
+  const paginatedOrders = (data?.orders ?? []).slice((ordersPage - 1) * PAGE_SIZE, ordersPage * PAGE_SIZE);
+
+  const txTotalPages = Math.max(1, Math.ceil(filteredTransactions.length / PAGE_SIZE));
+  const paginatedTx = filteredTransactions.slice((auditPage - 1) * PAGE_SIZE, auditPage * PAGE_SIZE);
+
+  const chatTotalPages = Math.max(1, Math.ceil(chatMessages.length / PAGE_SIZE));
+  const paginatedChat = chatMessages.slice((chatPage - 1) * PAGE_SIZE, chatPage * PAGE_SIZE);
 
   return (
     <main className="admin-shell">
@@ -431,25 +450,6 @@ export default function AdminDashboard() {
         <div className="admin-header-actions">
           {data && (
             <>
-              <button
-                type="button"
-                className="btn-secondary admin-btn-action"
-                onClick={() => setShowWaModal(true)}
-                style={{
-                  display: "inline-flex",
-                  alignItems: "center",
-                  gap: "6px",
-                  background: waStatus?.ready ? "#ECFDF5" : waStatus?.qrCode ? "#FFFBEB" : undefined,
-                  borderColor: waStatus?.ready ? "#A7F3D0" : waStatus?.qrCode ? "#FDE68A" : undefined,
-                  color: waStatus?.ready ? "#065F46" : waStatus?.qrCode ? "#92400E" : undefined,
-                }}
-                title="Integrasi & QR Code Bot WhatsApp"
-              >
-                <Smartphone size={14} color={waStatus?.ready ? "#10B981" : waStatus?.qrCode ? "#F59E0B" : "currentColor"} />
-                <span>
-                  Bot WA: {waStatus?.ready ? "🟢 Aktif" : waStatus?.qrCode ? "🟡 Scan QR" : "⚪ Offline"}
-                </span>
-              </button>
               <a
                 href="/studio"
                 className="btn-secondary admin-btn-action"
@@ -914,46 +914,62 @@ export default function AdminDashboard() {
               </div>
 
               <div style={{ overflowX: "auto", marginTop: "16px" }}>
-                {filteredUsers.length > 0 ? (
-                  <table className="admin-custom-table">
-                    <thead>
-                      <tr>
-                        <th>Email Pengguna</th>
-                        <th>Saldo Kredit</th>
-                        <th>Terakhir Diperbarui</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {filteredUsers.map((user) => (
-                        <tr key={user.email}>
-                          <td style={{ fontWeight: 600 }}>{user.email}</td>
-                          <td>
-                            <span
-                              style={{
-                                display: "inline-flex",
-                                padding: "2px 8px",
-                                borderRadius: "6px",
-                                background: "var(--cobalt-light)",
-                                color: "var(--cobalt)",
-                                fontWeight: 750,
-                                fontSize: "0.78rem",
-                              }}
-                            >
-                              {user.credits} kredit
-                            </span>
-                          </td>
-                          <td style={{ color: "var(--text-muted)", fontSize: "0.78rem" }}>
-                            {new Date(user.updatedAt).toLocaleDateString("id-ID", {
-                              year: "numeric",
-                              month: "short",
-                              day: "numeric",
-                            })}
-                          </td>
+                {paginatedUsers.length > 0 ? (
+                  <>
+                    <table className="admin-custom-table">
+                      <thead>
+                        <tr>
+                          <th>Email Pengguna</th>
+                          <th>Saldo Kredit</th>
+                          <th>Terakhir Diperbarui</th>
                         </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                ) : (
+                      </thead>
+                      <tbody>
+                        {paginatedUsers.map((user) => (
+                          <tr key={user.email}>
+                            <td style={{ fontWeight: 600 }}>{user.email}</td>
+                            <td>
+                              <span
+                                style={{
+                                  display: "inline-flex",
+                                  padding: "2px 8px",
+                                  borderRadius: "6px",
+                                  background: "var(--cobalt-light)",
+                                  color: "var(--cobalt)",
+                                  fontWeight: 750,
+                                  fontSize: "0.78rem",
+                                }}
+                              >
+                                {user.credits} kredit
+                              </span>
+                            </td>
+                            <td style={{ color: "var(--text-muted)", fontSize: "0.78rem" }}>
+                              {new Date(user.updatedAt).toLocaleDateString("id-ID", {
+                                year: "numeric",
+                                month: "short",
+                                day: "numeric",
+                              })}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                    {usersTotalPages > 1 && (
+                      <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: "6px", marginTop: "12px" }}>
+                        <button type="button" onClick={() => setUsersPage((p) => Math.max(1, p - 1))} disabled={usersPage === 1} style={{ padding: "4px 10px", border: "1px solid var(--border)", borderRadius: "6px", background: usersPage === 1 ? "#F3F4F6" : "#fff", cursor: usersPage === 1 ? "not-allowed" : "pointer", fontSize: "0.75rem" }}>Prev</button>
+                        <span style={{ fontSize: "0.75rem", color: "var(--text-muted)" }}>{usersPage}/{usersTotalPages}</span>
+                        <button type="button" onClick={() => setUsersPage((p) => Math.min(usersTotalPages, p + 1))} disabled={usersPage === usersTotalPages} style={{ padding: "4px 10px", border: "1px solid var(--border)", borderRadius: "6px", background: usersPage === usersTotalPages ? "#F3F4F6" : "#fff", cursor: usersPage === usersTotalPages ? "not-allowed" : "pointer", fontSize: "0.75rem" }}>Next</button>
+                </div>
+              )}
+              {chatTotalPages > 1 && (
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: "6px", marginTop: "12px" }}>
+                  <button type="button" onClick={() => setChatPage((p) => Math.max(1, p - 1))} disabled={chatPage === 1} style={{ padding: "4px 10px", border: "1px solid var(--border)", borderRadius: "6px", background: chatPage === 1 ? "#F3F4F6" : "#fff", cursor: chatPage === 1 ? "not-allowed" : "pointer", fontSize: "0.75rem" }}>Prev</button>
+                  <span style={{ fontSize: "0.75rem", color: "var(--text-muted)" }}>{chatPage}/{chatTotalPages}</span>
+                  <button type="button" onClick={() => setChatPage((p) => Math.min(chatTotalPages, p + 1))} disabled={chatPage === chatTotalPages} style={{ padding: "4px 10px", border: "1px solid var(--border)", borderRadius: "6px", background: chatPage === chatTotalPages ? "#F3F4F6" : "#fff", cursor: chatPage === chatTotalPages ? "not-allowed" : "pointer", fontSize: "0.75rem" }}>Next</button>
+                </div>
+              )}
+              </>
+            ) : (
                   <div className="admin-empty-table-state">
                     <div className="admin-empty-icon">
                       <User size={24} />
@@ -1000,23 +1016,24 @@ export default function AdminDashboard() {
             </div>
 
             <div style={{ overflowX: "auto", marginTop: "16px" }}>
-              {data.orders && data.orders.length > 0 ? (
-                <table className="admin-custom-table">
-                  <thead>
-                    <tr>
-                      <th>No. Invoice</th>
-                      <th>Pengguna</th>
-                      <th>Paket & Kredit</th>
-                      <th>Nominal</th>
-                      <th>Bukti Transfer</th>
-                      <th>Hasil Audit AI</th>
-                      <th>Status Tagihan</th>
-                      <th>Waktu Pesan</th>
-                      <th style={{ textAlign: "right" }}>Aksi Admin</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {data.orders.map((ord) => (
+              {paginatedOrders.length > 0 ? (
+                <>
+                  <table className="admin-custom-table">
+                    <thead>
+                      <tr>
+                        <th>No. Invoice</th>
+                        <th>Pengguna</th>
+                        <th>Paket & Kredit</th>
+                        <th>Nominal</th>
+                        <th>Bukti Transfer</th>
+                        <th>Hasil Audit AI</th>
+                        <th>Status Tagihan</th>
+                        <th>Waktu Pesan</th>
+                        <th style={{ textAlign: "right" }}>Aksi Admin</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {paginatedOrders.map((ord) => (
                       <tr key={ord.id}>
                         <td>
                           <code style={{ fontSize: "0.78rem", fontWeight: 750, color: "var(--navy)", background: "#F1F5F9", padding: "2px 6px", borderRadius: "6px" }}>
@@ -1235,8 +1252,16 @@ export default function AdminDashboard() {
                         </td>
                       </tr>
                     ))}
-                  </tbody>
-                </table>
+                    </tbody>
+                  </table>
+                  {ordersTotalPages > 1 && (
+                    <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: "6px", marginTop: "12px" }}>
+                      <button type="button" onClick={() => setOrdersPage((p) => Math.max(1, p - 1))} disabled={ordersPage === 1} style={{ padding: "4px 10px", border: "1px solid var(--border)", borderRadius: "6px", background: ordersPage === 1 ? "#F3F4F6" : "#fff", cursor: ordersPage === 1 ? "not-allowed" : "pointer", fontSize: "0.75rem" }}>Prev</button>
+                      <span style={{ fontSize: "0.75rem", color: "var(--text-muted)" }}>{ordersPage}/{ordersTotalPages}</span>
+                      <button type="button" onClick={() => setOrdersPage((p) => Math.min(ordersTotalPages, p + 1))} disabled={ordersPage === ordersTotalPages} style={{ padding: "4px 10px", border: "1px solid var(--border)", borderRadius: "6px", background: ordersPage === ordersTotalPages ? "#F3F4F6" : "#fff", cursor: ordersPage === ordersTotalPages ? "not-allowed" : "pointer", fontSize: "0.75rem" }}>Next</button>
+                    </div>
+                  )}
+                </>
               ) : (
                 <div className="admin-empty-table-state">
                   <div className="admin-empty-icon">
@@ -1289,18 +1314,19 @@ export default function AdminDashboard() {
             </div>
 
             <div style={{ overflowX: "auto", marginTop: "16px" }}>
-              {filteredTransactions.length > 0 ? (
-                <table className="admin-custom-table">
-                  <thead>
-                    <tr>
-                      <th>Pengguna</th>
-                      <th>Perubahan</th>
-                      <th>Keterangan</th>
-                      <th>Waktu Transaksi</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {filteredTransactions.map((tx) => (
+              {paginatedTx.length > 0 ? (
+                <>
+                  <table className="admin-custom-table">
+                    <thead>
+                      <tr>
+                        <th>Pengguna</th>
+                        <th>Perubahan</th>
+                        <th>Keterangan</th>
+                        <th>Waktu Transaksi</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {paginatedTx.map((tx) => (
                       <tr key={tx.id}>
                         <td style={{ fontWeight: 600 }}>{tx.userEmail}</td>
                         <td>
@@ -1324,8 +1350,16 @@ export default function AdminDashboard() {
                         </td>
                       </tr>
                     ))}
-                  </tbody>
-                </table>
+                    </tbody>
+                  </table>
+                  {txTotalPages > 1 && (
+                    <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: "6px", marginTop: "12px" }}>
+                      <button type="button" onClick={() => setAuditPage((p) => Math.max(1, p - 1))} disabled={auditPage === 1} style={{ padding: "4px 10px", border: "1px solid var(--border)", borderRadius: "6px", background: auditPage === 1 ? "#F3F4F6" : "#fff", cursor: auditPage === 1 ? "not-allowed" : "pointer", fontSize: "0.75rem" }}>Prev</button>
+                      <span style={{ fontSize: "0.75rem", color: "var(--text-muted)" }}>{auditPage}/{txTotalPages}</span>
+                      <button type="button" onClick={() => setAuditPage((p) => Math.min(txTotalPages, p + 1))} disabled={auditPage === txTotalPages} style={{ padding: "4px 10px", border: "1px solid var(--border)", borderRadius: "6px", background: auditPage === txTotalPages ? "#F3F4F6" : "#fff", cursor: auditPage === txTotalPages ? "not-allowed" : "pointer", fontSize: "0.75rem" }}>Next</button>
+                    </div>
+                  )}
+                </>
               ) : (
                 <div className="admin-empty-table-state">
                   <div className="admin-empty-icon">
@@ -1363,8 +1397,9 @@ export default function AdminDashboard() {
             </div>
 
             {chatMessages.length > 0 ? (
+              <>
               <div style={{ display: "flex", flexDirection: "column", gap: "10px" }}>
-                {chatMessages.map((chat) => (
+                {paginatedChat.map((chat) => (
                   <div
                     key={chat.id}
                     style={{
@@ -1426,6 +1461,7 @@ export default function AdminDashboard() {
                   </div>
                 ))}
               </div>
+              </>
             ) : (
               <div className="admin-empty-table-state">
                 <div className="admin-empty-icon">
