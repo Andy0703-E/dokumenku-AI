@@ -126,11 +126,13 @@ export function useDocumentGenerator() {
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ selectedModel, prompt: brief }),
         });
-        const startPayload = (await startResponse.json()) as unknown as { generationId?: string; error?: string };
-        if (!startResponse.ok || !startPayload.generationId) {
-          throw new Error(startPayload.error || "Pembuatan dokumen tidak dapat dimulai.");
+        const startPayload = (await startResponse.json()) as unknown as { data?: { generationId?: string }; generationId?: string; error?: string };
+        const resolvedGenerationId = startPayload.data?.generationId ?? startPayload.generationId;
+        if (!startResponse.ok || !resolvedGenerationId) {
+          const errorMsg = startPayload.error || (startPayload as Record<string, unknown>).message || "Pembuatan dokumen tidak dapat dimulai.";
+          throw new Error(typeof errorMsg === "string" ? errorMsg : "Pembuatan dokumen tidak dapat dimulai.");
         }
-        generationId = startPayload.generationId;
+        generationId = resolvedGenerationId;
 
         let currentFiles: GeneratedFiles = { ...EMPTY_FILES };
         setFiles(currentFiles);
