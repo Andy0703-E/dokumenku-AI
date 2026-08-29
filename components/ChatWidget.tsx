@@ -120,7 +120,7 @@ export default function ChatWidget() {
 
       setChatHistory((prev) => [
         ...prev,
-        { role: "bot", text: payload.message || "Pesan terkirim! Admin akan merespons via WhatsApp." },
+        { role: "bot", text: payload.message || "Pesan terkirim! Admin akan segera merespons." },
       ]);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Gagal mengirim pesan.");
@@ -230,7 +230,7 @@ export default function ChatWidget() {
               <div>
                 <strong style={{ fontSize: "0.92rem", display: "block" }}>Dokumenku AI Support</strong>
                 <span style={{ fontSize: "0.72rem", opacity: 0.85 }}>
-                  {isAuthed ? "Online • Balasan via WhatsApp" : "Masuk untuk chat"}
+                  {isAuthed ? "                  Online" : "Masuk untuk chat"}
                 </span>
               </div>
             </div>
