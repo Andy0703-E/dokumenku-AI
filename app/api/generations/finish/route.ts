@@ -3,6 +3,7 @@ import { cookies } from "next/headers";
 import {
   getDatabase,
   executeAtomicDocumentFinalization,
+  settleGenerationCredits,
   releaseCredits,
 } from "@/db";
 import { getCurrentUser } from "@/lib/auth";
@@ -44,14 +45,28 @@ export async function POST(request: NextRequest) {
       const db = await getDatabase();
       const now = new Date().toISOString();
 
+      // ── ALL_DONE: Settle credits + mark generation completed ─────
       if (documentType === "ALL_DONE") {
+        const settleResult = await settleGenerationCredits(db, {
+          generationId,
+          userEmail: user.email,
+        });
+
         await db.execute({
           sql: "UPDATE document_generations SET status = 'COMPLETED', completed_at = ? WHERE id = ? AND user_email = ?",
           args: [now, generationId, user.email],
         });
-        return apiSuccess({ status: "COMPLETED", generationId, message: "Semua dokumen selesai." }, 200, requestId);
+
+        return apiSuccess({
+          status: "COMPLETED",
+          generationId,
+          credits: settleResult.availableCredits ?? 0,
+          reservedCredits: settleResult.reservedCredits ?? 0,
+          message: "Semua dokumen selesai.",
+        }, 200, requestId);
       }
 
+      // ── Individual doc: save document only (no credit mutations) ─
       if (completed && content && content.trim().length > 50) {
         const finalizationResult = await executeAtomicDocumentFinalization(db, {
           userEmail: user.email,
@@ -66,58 +81,31 @@ export async function POST(request: NextRequest) {
           return apiError(ERROR_CODES.DATABASE_TRANSACTION_FAILED, "Gagal menyimpan dokumen ke database. Kredit Anda tetap aman dalam reservasi dan dapat difinalisasi ulang.", 500, requestId);
         }
 
-        await db.execute({
-          sql: "UPDATE document_generations SET status = 'GENERATING', updated_at = ? WHERE id = ? AND user_email = ?",
-          args: [now, generationId, user.email],
-        });
-
         return apiSuccess({
           status: "GENERATING",
           generationId,
-          credits: finalizationResult.availableCredits ?? 0,
-          availableCredits: finalizationResult.availableCredits ?? 0,
-          reservedCredits: finalizationResult.reservedCredits ?? 0,
           alreadyProcessed: finalizationResult.alreadyProcessed ?? false,
           message: `Dokumen ${documentType} berhasil disimpan.`,
         }, 200, requestId);
       }
 
+      // ── Completed but short content: settle credits ─────────────
       if (completed && (!content || content.trim().length <= 50)) {
-        const tx = await db.transaction("write");
-        try {
-          const settleResult = await tx.execute({
-            sql: `UPDATE credit_reservations SET status = 'CAPTURED', settled_at = ? WHERE generation_id = ? AND status = 'RESERVED'`,
-            args: [now, generationId],
-          });
-          if ((settleResult.rowsAffected ?? 0) > 0) {
-            await tx.execute({
-              sql: `UPDATE users SET reserved_credits = MAX(0, COALESCE(reserved_credits, 0) - 1), updated_at = ? WHERE email = ?`,
-              args: [now, user.email],
-            });
-          }
-          await tx.execute({
-            sql: "UPDATE document_generations SET status = 'GENERATING', updated_at = ? WHERE id = ? AND user_email = ?",
-            args: [now, generationId, user.email],
-          });
-          await tx.commit();
-        } catch (err) {
-          await tx.rollback();
-          throw err;
-        }
-        const userRow = await db.execute({
-          sql: "SELECT available_credits, reserved_credits FROM users WHERE email = ?",
-          args: [user.email],
+        const settleResult = await settleGenerationCredits(db, {
+          generationId,
+          userEmail: user.email,
         });
-        const u = userRow.rows[0] as unknown as { available_credits: number; reserved_credits: number } | undefined;
+
         return apiSuccess({
           status: "GENERATING",
           generationId,
-          credits: u?.available_credits ?? 0,
-          reservedCredits: u?.reserved_credits ?? 0,
+          credits: settleResult.availableCredits ?? 0,
+          reservedCredits: settleResult.reservedCredits ?? 0,
           message: `Dokumen ${documentType} selesai (ringkas).`,
         }, 200, requestId);
       }
 
+      // ── Failure: release credits ────────────────────────────────
       if (failureReason) {
         await releaseCredits(db, { generationId, reason: failureReason });
 

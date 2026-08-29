@@ -40,8 +40,6 @@ const FLAGSHIP_PATTERNS = [
 ];
 
 const STARTER_EXCEPTIONS = [
-  /^auto$/i,
-  /^auto-debug$/i,
   /^deepseek-v4-flash/i,
   /^hy3$/i,
   /gpt-4o-mini/i,

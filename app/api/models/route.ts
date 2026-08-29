@@ -52,13 +52,18 @@ export async function GET() {
     const payload = await upstreamResponse.json();
 
     if (payload && Array.isArray(payload.data)) {
-      const classifiedList: ModelItem[] = payload.data.map(
-        (m: { id?: string; name?: string; display_name?: string }) => {
-          const id = m.id ?? "";
-          const name = m.name || m.display_name || id;
-          return classifyModel(id, name);
-        },
-      );
+      const classifiedList: ModelItem[] = payload.data
+        .filter((m: { id?: string }) => {
+          const id = (m.id ?? "").trim().toLowerCase();
+          return id && id !== "auto" && id !== "auto-debug";
+        })
+        .map(
+          (m: { id?: string; name?: string; display_name?: string }) => {
+            const id = m.id ?? "";
+            const name = m.name || m.display_name || id;
+            return classifyModel(id, name);
+          },
+        );
 
       classifiedList.sort((a: ModelItem, b: ModelItem) => {
         const aHealthy = a.healthStatus === "healthy" ? 1 : 0;

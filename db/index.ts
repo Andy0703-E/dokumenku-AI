@@ -1139,7 +1139,7 @@ export async function executeAtomicDocumentFinalization(
     content: string;
     generationId: string;
   },
-): Promise<{ ok: boolean; error?: string; availableCredits?: number; reservedCredits?: number; alreadyProcessed?: boolean }> {
+): Promise<{ ok: boolean; error?: string; alreadyProcessed?: boolean }> {
   const normEmail = userEmail.trim().toLowerCase();
   const now = new Date().toISOString();
 
@@ -1163,11 +1163,62 @@ export async function executeAtomicDocumentFinalization(
 
   if (!gen) return { ok: false, error: "RESOURCE_NOT_FOUND" };
 
-  // 3. Handle Idempotency on Already CAPTURED Reservation
+  // 3. Handle Idempotency — already captured or completed
+  if (res.status === "CAPTURED" || gen.status === "COMPLETED") {
+    return { ok: true, alreadyProcessed: true };
+  }
+
+  // 4. Validate Credit Reservation State
+  if (res.status !== "RESERVED") return { ok: false, error: "CREDIT_RESERVATION_INVALID_STATE" };
+
+  // 5. Validate Generation Domain State
+  if (gen.status !== "GENERATING" && gen.status !== "FINALIZE_FAILED") {
+    return { ok: false, error: "GENERATION_INVALID_STATE" };
+  }
+
+  // ── Save Document Only (no credit mutations) ─────────────────────
+  await db.execute({
+    sql: `INSERT INTO project_documents (user_email, project_id, document_type, file_name, content, status, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, 'COMPLETED', ?, ?)
+      ON CONFLICT(user_email, project_id, document_type) DO UPDATE SET
+        file_name = excluded.file_name,
+        content = excluded.content,
+        status = 'COMPLETED',
+        updated_at = excluded.updated_at`,
+    args: [normEmail, projectId, documentType, fileName, content, now, now],
+  });
+
+  return { ok: true };
+}
+
+// ─── Settle Generation Credits (Called on ALL_DONE) ─────────────────
+
+export async function settleGenerationCredits(
+  db: Client,
+  {
+    generationId,
+    userEmail,
+  }: {
+    generationId: string;
+    userEmail: string;
+  },
+): Promise<{ ok: boolean; error?: string; availableCredits?: number; reservedCredits?: number }> {
+  const normEmail = userEmail.trim().toLowerCase();
+  const now = new Date().toISOString();
+
+  // 1. Find reservation
+  const resResult = await db.execute({
+    sql: "SELECT * FROM credit_reservations WHERE generation_id = ?",
+    args: [generationId],
+  });
+  const res = resResult.rows[0] as unknown as
+    | { id: string; user_email: string; amount: number; status: string }
+    | undefined;
+
+  if (!res) return { ok: false, error: "CREDIT_RESERVATION_NOT_FOUND" };
+
+  // 2. Idempotent — already captured
   if (res.status === "CAPTURED") {
-    if (gen.status !== "COMPLETED") {
-      return { ok: false, error: "GENERATION_STATE_INVARIANT_VIOLATION" };
-    }
     const userResult = await db.execute({
       sql: "SELECT available_credits, reserved_credits FROM users WHERE email = ?",
       args: [normEmail],
@@ -1175,42 +1226,21 @@ export async function executeAtomicDocumentFinalization(
     const user = userResult.rows[0] as unknown as { available_credits: number; reserved_credits: number } | undefined;
     return {
       ok: true,
-      alreadyProcessed: true,
       availableCredits: (user?.available_credits as number) ?? 0,
       reservedCredits: (user?.reserved_credits as number) ?? 0,
     };
   }
 
-  // 4. Validate Credit Reservation State (strictly RESERVED)
   if (res.status !== "RESERVED") return { ok: false, error: "CREDIT_RESERVATION_INVALID_STATE" };
 
-  // 5. Validate Generation Domain State (strictly GENERATING or FINALIZE_FAILED)
-  if (gen.status !== "GENERATING" && gen.status !== "FINALIZE_FAILED") {
-    return { ok: false, error: "GENERATION_INVALID_STATE" };
-  }
-
-  // ── Atomic Write Transaction ──────────────────────────────────────
+  // 3. Atomic: capture reservation + decrement balance + ledger
   const tx = await db.transaction("write");
   try {
-    // 1. Save Document (UPSERT)
-    await tx.execute({
-      sql: `INSERT INTO project_documents (user_email, project_id, document_type, file_name, content, status, created_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, 'COMPLETED', ?, ?)
-        ON CONFLICT(user_email, project_id, document_type) DO UPDATE SET
-          file_name = excluded.file_name,
-          content = excluded.content,
-          status = 'COMPLETED',
-          updated_at = excluded.updated_at`,
-      args: [normEmail, projectId, documentType, fileName, content, now, now],
-    });
-
-    // 2. Mark reservation as CAPTURED
     await tx.execute({
       sql: "UPDATE credit_reservations SET status = 'CAPTURED', settled_at = ? WHERE generation_id = ?",
       args: [now, generationId],
     });
 
-    // 3. Update User Balance with strict invariant assertion
     const update = await tx.execute({
       sql: `UPDATE users
         SET reserved_credits = reserved_credits - ?,
@@ -1223,17 +1253,10 @@ export async function executeAtomicDocumentFinalization(
       throw new Error("CREDIT_BALANCE_INVARIANT_VIOLATION");
     }
 
-    // 4. Record Ledger Entry
     await tx.execute({
       sql: `INSERT INTO credit_transactions (user_email, amount, reason, order_id, type, created_at)
         VALUES (?, 0, ?, ?, 'AI_CREDIT_CAPTURED', ?)`,
-      args: [normEmail, `Penyelesaian finalisasi dokumen ${documentType} (${generationId})`, generationId, now],
-    });
-
-    // 5. Update generation job to COMPLETED
-    await tx.execute({
-      sql: "UPDATE document_generations SET status = 'COMPLETED', completed_at = ? WHERE id = ?",
-      args: [now, generationId],
+      args: [normEmail, `Penyelesaian generasi dokumen (${generationId})`, generationId, now],
     });
 
     await tx.commit();
@@ -1250,18 +1273,7 @@ export async function executeAtomicDocumentFinalization(
     };
   } catch (err) {
     await tx.rollback();
-
-    // Record FINALIZE_FAILED on document_generations AFTER rollback
-    try {
-      await db.execute({
-        sql: "UPDATE document_generations SET status = 'FINALIZE_FAILED', completed_at = ? WHERE id = ?",
-        args: [now, generationId],
-      });
-    } catch {
-      // ignore
-    }
-
-    return { ok: false, error: err instanceof Error ? err.message : "FINALIZE_FAILED" };
+    return { ok: false, error: err instanceof Error ? err.message : "SETTLE_FAILED" };
   }
 }
 
