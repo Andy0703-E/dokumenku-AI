@@ -2251,7 +2251,7 @@ export default function AdminDashboard() {
                 }}
               >
                 <option value="TRANSACTION_NOT_FOUND">Transaksi tidak ditemukan pada mutasi pembayaran</option>
-                <option value="AMOUNT_MISMATCH">Nominal transfer tidak sesuai (Rp 49.000)</option>
+                <option value="AMOUNT_MISMATCH">Nominal transfer tidak sesuai (Rp 20.000)</option>
                 <option value="MERCHANT_MISMATCH">Merchant tujuan transfer tidak sesuai</option>
                 <option value="PROOF_UNREADABLE">Bukti transfer buram / terpotong / tidak terbaca</option>
                 <option value="TRANSACTION_DUPLICATE">ID transaksi sudah pernah digunakan sebelumnya</option>

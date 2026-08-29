@@ -107,7 +107,7 @@ const PLANS = [
   },
   {
     name: "Pro Studio",
-    price: "Rp 49.000",
+    price: "Rp 20.000",
     period: "sekali beli",
     desc: "Sekali bayar, pakai selamanya",
     features: [
@@ -148,8 +148,8 @@ const FAQS = [
   },
   {
     icon: Clock,
-    q: "Apakah ada batasan kredit di paket gratis?",
-    a: "Setiap pengguna baru langsung mendapatkan 3 kredit starter gratis (setara 12 dokumen rekayasa). Kredit ini aktif selamanya tanpa kedaluwarsa.",
+    q: "Berapa harga paket Dokumenku AI?",
+    a: "Paket Pro Studio seharga Rp 20.000 untuk 100 kredit (100 set 4 dokumen). Sekali bayar, pakai selamanya. Untuk paket Enterprise, silakan hubungi kami via WhatsApp.",
   },
   {
     icon: Edit3,
@@ -559,7 +559,7 @@ export default function LandingPage({ onStart }: LandingPageProps) {
                   if (plan.name === "Pro Studio") {
                     window.location.assign("/pricing");
                   } else if (plan.name === "Enterprise") {
-                    window.location.assign("mailto:dadung2707@gmail.com?subject=Inquiry%20Enterprise%20Dokumenku%20AI");
+                    window.location.assign("https://wa.me/6285754494990?text=Halo%20Dokumenku%20AI%2C%20saya%20tertarik%20dengan%20paket%20Enterprise.");
                   } else {
                     handleStartAction();
                   }

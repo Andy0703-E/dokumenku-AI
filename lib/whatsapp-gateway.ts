@@ -137,7 +137,7 @@ export async function notifyAdminNewProofUpload(
 ━━━━━━━━━━━━━━━━━━━━━━━
 📄 *No. Invoice:* \`${params.orderId}\`
 👤 *Pengguna:* ${params.userEmail}
-💰 *Nominal Tagihan:* Rp ${(params.amount || 49000).toLocaleString("id-ID")}
+💰 *Nominal Tagihan:* Rp ${(params.amount || 20000).toLocaleString("id-ID")}
 💎 *Paket:* Pro Studio (+100 Kredit)
 🔑 *Token Approval:* *${params.approvalToken}*
 

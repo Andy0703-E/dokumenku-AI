@@ -142,7 +142,7 @@ export async function POST(request: NextRequest) {
 
       const orderId = String(order.id);
       const userEmail = String(order.user_email);
-      const amount = Number(order.amount || 49000);
+      const amount = Number(order.amount || 20000);
       const creditBonus = Number(order.credits || 100);
 
       if (tokenArg && order.approval_token_hash) {
@@ -284,7 +284,7 @@ Saldo kredit pengguna telah aktif seketika di website Dokumenku AI!`;
 
       let listText = `📋 *DAFTAR TAGIHAN MENUNGGU REVIEW (${pendingOrders.length})*\n━━━━━━━━━━━━━━━━━━━━━━━\n`;
       pendingOrders.forEach((ord, i) => {
-        listText += `\n*${i + 1}. ${ord.id}*\n• User: ${ord.user_email}\n• Tagihan: Rp ${(Number(ord.amount) || 49000).toLocaleString("id-ID")} (+${ord.credits} Kredit)\n• Merchant: ${ord.ocr_merchant || "-"}\n• Balas: *ACC ${ord.id}* atau *TOLAK ${ord.id}*\n`;
+        listText += `\n*${i + 1}. ${ord.id}*\n• User: ${ord.user_email}\n• Tagihan: Rp ${(Number(ord.amount) || 20000).toLocaleString("id-ID")} (+${ord.credits} Kredit)\n• Merchant: ${ord.ocr_merchant || "-"}\n• Balas: *ACC ${ord.id}* atau *TOLAK ${ord.id}*\n`;
       });
 
       await sendWhatsAppMessage(sender, listText).catch(() => {});

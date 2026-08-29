@@ -22,7 +22,7 @@ export async function POST(request: NextRequest) {
     const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
     const orderId = `INV-${Date.now().toString(36).toUpperCase()}-${Math.floor(100 + Math.random() * 900)}`;
     const planName = plan === "pro" ? "Pro Studio" : "Pro Studio";
-    const amount = 49000;
+    const amount = 20000;
     const credits = 100;
 
     await db.execute({

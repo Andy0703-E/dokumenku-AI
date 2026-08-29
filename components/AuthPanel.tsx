@@ -98,7 +98,7 @@ export default function AuthPanel({ initialMode = "login" }: AuthPanelProps) {
       }
 
       if (mode === "register") {
-        toast.success("Akun berhasil dibuat! 3 kredit starter telah aktif.");
+                toast.success("Akun berhasil dibuat! Silakan beli paket Pro Studio untuk mulai generate dokumen.");
         window.location.assign("/studio");
       } else if (payload.isAdmin) {
         toast.success("Berhasil masuk sebagai Admin.");
@@ -228,14 +228,14 @@ export default function AuthPanel({ initialMode = "login" }: AuthPanelProps) {
           <p className="auth-form-sub">
             {mode === "login"
               ? "Masukkan email dan kata sandi untuk melanjutkan ke studio."
-              : "Daftar gratis sekarang dan langsung dapatkan 3 kredit starter."}
+              : "Buat akun baru, beli paket Pro Studio, dan langsung generate dokumen."}
           </p>
 
           {/* Register Benefit Chips */}
           {mode === "register" && (
             <div className="auth-benefits-badges">
               <span className="auth-benefit-item">
-                <Check size={14} strokeWidth={3} /> 3 kredit starter langsung aktif
+                <Check size={14} strokeWidth={3} /> Beli paket mulai Rp 20.000
               </span>
               <span className="auth-benefit-item">
                 <Check size={14} strokeWidth={3} /> Akses 4 dokumen rekayasa lengkap

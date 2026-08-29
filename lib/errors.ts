@@ -136,7 +136,7 @@ export const ERROR_MESSAGES: Record<ErrorCode, string> = {
   [ERROR_CODES.PROOF_IMAGE_CORRUPTED]: "File gambar bukti transfer rusak, terpotong, atau tidak dapat didekode.",
   [ERROR_CODES.PROOF_IMAGE_DIMENSIONS_INVALID]: "Dimensi gambar tidak wajar (maksimal 8192x8192 piksel).",
   [ERROR_CODES.PROOF_IMAGE_UNREADABLE]: "Bukti pembayaran tidak dapat dibaca. Unggah gambar yang lebih jelas dan tidak terpotong.",
-  [ERROR_CODES.PAYMENT_AMOUNT_MISMATCH]: "Nominal pada bukti pembayaran tidak sesuai dengan total tagihan (Rp 49.000).",
+  [ERROR_CODES.PAYMENT_AMOUNT_MISMATCH]: "Nominal pada bukti pembayaran tidak sesuai dengan total tagihan (Rp 20.000).",
   [ERROR_CODES.PAYMENT_MERCHANT_MISMATCH]: "Tujuan pembayaran pada bukti struk tidak sesuai dengan merchant tagihan QRIS Dokumenku AI.",
   [ERROR_CODES.PAYMENT_TRANSACTION_DUPLICATE]: "Transaksi ini sudah pernah digunakan untuk tagihan lain.",
   [ERROR_CODES.PAYMENT_TRANSACTION_DATE_INVALID]: "Waktu transaksi pada struk tidak sesuai dengan periode tagihan aktif.",

@@ -529,7 +529,7 @@ export default function StudioWorkbench({
                     <p style={{ fontSize: "0.76rem", color: "#7F1D1D", margin: "0 0 8px", lineHeight: "1.45" }}>
                       {isAuthenticated
                         ? "Anda telah menggunakan seluruh kredit akun. Beli paket Pro Studio untuk menambah saldo kredit."
-                        : "3 Kredit starter gratis Anda telah digunakan. Buat akun gratis sekarang atau pilih paket untuk lanjut."}
+                        : "Silakan masuk atau daftar akun, lalu beli paket Pro Studio untuk mulai generate dokumen."}
                     </p>
                     <div style={{ display: "flex", gap: "6px", flexWrap: "wrap" }}>
                       {!isAuthenticated && (
@@ -1055,7 +1055,7 @@ export default function StudioWorkbench({
               <p style={{ fontSize: "0.86rem", color: "var(--text-muted)", margin: "0 0 16px", lineHeight: "1.55" }}>
                 {isAuthenticated
                   ? "Saldo kredit pada akun Anda telah mencapai 0. Beli paket kredit tambahan untuk menyusun paket 4 dokumen proyek baru."
-                  : "Anda telah menggunakan seluruh 3 kredit starter gratis. Daftar akun baru secara gratis untuk akses cloud atau pilih paket Pro Studio."}
+                  : "Silakan masuk atau daftar akun, lalu beli paket Pro Studio untuk mulai generate dokumen."}
               </p>
 
               <div
@@ -1075,7 +1075,7 @@ export default function StudioWorkbench({
                 <ul style={{ margin: 0, paddingLeft: "18px", fontSize: "0.76rem", color: "var(--text-muted)", lineHeight: "1.6" }}>
                   <li>Dokumen yang telah dibuat tetap dapat di-<strong>Edit Manual</strong>.</li>
                   <li>Unduh file .MD atau semua dokumen (.ZIP) tetap <strong>Gratis</strong>.</li>
-                  <li>Paket Pro Studio mulai Rp 49.000 (100 Kredit tanpa langganan).</li>
+                  <li>Paket Pro Studio mulai Rp 20.000 (100 Kredit tanpa langganan).</li>
                 </ul>
               </div>
             </div>

@@ -15,7 +15,7 @@ import {
 const PROVIDER_BASE_URL = "https://bandelbanget.xyz/v1";
 const EXPECTED_MERCHANT_NAME = "Jasa pembuatan websi...";
 const EXPECTED_NMID = "ID1026479441309";
-const EXPECTED_AMOUNT = 49000;
+const EXPECTED_AMOUNT = 20000;
 const MAX_UPLOAD_SIZE_BYTES = 5 * 1024 * 1024;
 
 interface ExtractedOcrData {
@@ -177,11 +177,11 @@ Jika gambar buram/bukan struk, isi "extracted_code": "IMAGE_UNREADABLE".`;
     let primaryErrorCode: string | null = null;
 
     const rawAmountDigits = (extracted.amount || "").replace(/[^0-9]/g, "");
-    if (rawAmountDigits && rawAmountDigits !== "49000") {
+    if (rawAmountDigits && rawAmountDigits !== "20000") {
       const parsedNum = parseInt(rawAmountDigits, 10);
       if (parsedNum !== EXPECTED_AMOUNT) {
         primaryErrorCode = ERROR_CODES.PAYMENT_AMOUNT_MISMATCH;
-        validationErrors.push(`Nominal struk terdeteksi (${extracted.amount}) tidak sesuai dengan nominal tagihan (Rp 49.000).`);
+        validationErrors.push(`Nominal struk terdeteksi (${extracted.amount}) tidak sesuai dengan nominal tagihan (Rp 20.000).`);
       }
     }
 

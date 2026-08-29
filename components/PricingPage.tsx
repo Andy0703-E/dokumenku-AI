@@ -36,24 +36,24 @@ import { toast } from "sonner";
 const plans = [
   {
     name: "Starter",
-    badge: "Gratis",
-    price: "Rp 0",
-    period: "selamanya",
-    desc: "Coba gratis untuk memulai",
+    badge: "Mulai",
+    price: "Rp 20.000",
+    period: "sekali beli",
+    desc: "Paket dasar untuk mencoba",
     features: [
-      "3 Kredit (3 set 4 dokumen)",
+      "100 Kredit (100 set 4 dokumen)",
       "Semua fitur Studio Generator",
       "Ekspor ZIP & MD",
       "Dukungan komunitas",
     ],
-    cta: "Mulai Gratis",
-    ctaHref: "/login",
+    cta: "Beli Sekarang",
+    ctaHref: "/pricing",
     popular: false,
   },
   {
     name: "Pro Studio",
     badge: "Paling Populer",
-    price: "Rp 49.000",
+    price: "Rp 20.000",
     period: "sekali beli",
     desc: "Sekali bayar, pakai selamanya",
     features: [
@@ -78,8 +78,8 @@ const plans = [
       "SLA & dukungan khusus",
       "Onboarding & training",
     ],
-    cta: "Hubungi Kami",
-    ctaHref: "mailto:admin@dokumenku.ai",
+    cta: "Hubungi via WhatsApp",
+    ctaHref: "https://wa.me/6285754494990?text=Halo%20Dokumenku%20AI%2C%20saya%20tertarik%20dengan%20paket%20Enterprise.",
     popular: false,
   },
 ];
@@ -711,7 +711,7 @@ export default function PricingPage() {
                     }}
                   >
                     <div style={{ display: "flex", justifyContent: "space-between", marginBottom: "4px" }}>
-                      <span>Total Tagihan: <strong style={{ color: "var(--cobalt)" }}>Rp 49.000</strong></span>
+                      <span>Total Tagihan: <strong style={{ color: "var(--cobalt)" }}>Rp 20.000</strong></span>
                       <span>Kredit Diperoleh: <strong style={{ color: "#059669" }}>+100 Kredit Pro Studio</strong></span>
                     </div>
                     <p style={{ margin: "4px 0 0", color: "var(--text-muted)", fontSize: "0.72rem" }}>
