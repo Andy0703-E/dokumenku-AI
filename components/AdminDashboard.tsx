@@ -196,6 +196,50 @@ export default function AdminDashboard() {
 
   const [isDisconnectingWa, setIsDisconnectingWa] = useState(false);
 
+  // ── Chat State ─────────────────────────────────────────────────
+  const [chatMessages, setChatMessages] = useState<Array<{
+    id: number;
+    userEmail: string;
+    userName: string;
+    message: string;
+    adminReply: string | null;
+    createdAt: string;
+  }>>([]);
+  const [chatReplyText, setChatReplyText] = useState<Record<number, string>>({});
+  const [isReplying, setIsReplying] = useState<number | null>(null);
+  const [isLoadingChat, setIsLoadingChat] = useState(false);
+
+  async function loadChatMessages() {
+    setIsLoadingChat(true);
+    try {
+      const res = await fetch("/api/admin/chat");
+      const payload = (await res.json()) as { ok?: boolean; messages?: typeof chatMessages };
+      if (payload.ok && payload.messages) setChatMessages(payload.messages);
+    } catch { /* ignore */ }
+    setIsLoadingChat(false);
+  }
+
+  async function handleChatReply(chatId: number) {
+    const reply = chatReplyText[chatId]?.trim();
+    if (!reply) return;
+    setIsReplying(chatId);
+    try {
+      const res = await fetch("/api/admin/chat", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ chatId, reply }),
+      });
+      const payload = (await res.json()) as { ok?: boolean; error?: string };
+      if (!res.ok || !payload.ok) throw new Error(payload.error || "Gagal mengirim balasan.");
+      toast.success(`Balasan ke chat #${chatId} terkirim!`);
+      setChatReplyText((prev) => ({ ...prev, [chatId]: "" }));
+      loadChatMessages();
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Gagal mengirim balasan.");
+    }
+    setIsReplying(null);
+  }
+
   async function handleDisconnectWa() {
     if (!window.confirm("Yakin ingin memutus sesi bot WhatsApp ini? Anda harus scan QR code ulang setelah ini.")) {
       return;
@@ -300,6 +344,7 @@ export default function AdminDashboard() {
 
   useEffect(() => {
     void loadOverview();
+    void loadChatMessages();
   }, []);
 
   async function handleAdminLogout() {
@@ -1292,6 +1337,105 @@ export default function AdminDashboard() {
                 </div>
               )}
             </div>
+          </section>
+
+          {/* Chat Management Section */}
+          <section className="admin-card-surface" aria-labelledby="chat-heading">
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "16px", flexWrap: "wrap", gap: "8px" }}>
+              <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+                <MessageSquare size={20} color="var(--cobalt)" />
+                <h2 id="chat-heading" style={{ margin: 0, fontSize: "1.15rem", fontWeight: 800, color: "var(--navy)" }}>
+                  Chat User
+                </h2>
+                <span style={{ fontSize: "0.75rem", color: "var(--text-muted)", background: "var(--bg-soft)", padding: "2px 8px", borderRadius: "8px" }}>
+                  {chatMessages.filter((m) => !m.adminReply).length} belum dibalas
+                </span>
+              </div>
+              <button
+                type="button"
+                onClick={loadChatMessages}
+                className="btn-secondary"
+                style={{ minHeight: "32px", padding: "0 12px", fontSize: "0.78rem" }}
+                disabled={isLoadingChat}
+              >
+                <RefreshCw size={13} className={isLoadingChat ? "animate-spin" : ""} /> Muat Ulang
+              </button>
+            </div>
+
+            {chatMessages.length > 0 ? (
+              <div style={{ display: "flex", flexDirection: "column", gap: "10px" }}>
+                {chatMessages.map((chat) => (
+                  <div
+                    key={chat.id}
+                    style={{
+                      padding: "14px 16px",
+                      borderRadius: "10px",
+                      border: chat.adminReply ? "1px solid #D1FAE5" : "1px solid #E5E7EB",
+                      background: chat.adminReply ? "#F0FDF4" : "#FFFFFF",
+                    }}
+                  >
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "6px" }}>
+                      <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+                        <span style={{ fontWeight: 700, fontSize: "0.85rem", color: "var(--navy)" }}>
+                          #{chat.id} — {chat.userName}
+                        </span>
+                        <span style={{ fontSize: "0.72rem", color: "var(--text-muted)" }}>
+                          {chat.userEmail}
+                        </span>
+                      </div>
+                      <span style={{ fontSize: "0.7rem", color: "var(--text-muted)" }}>
+                        {new Date(chat.createdAt).toLocaleString("id-ID", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" })}
+                      </span>
+                    </div>
+                    <p style={{ margin: "0 0 8px", fontSize: "0.84rem", color: "#374151", lineHeight: "1.5" }}>
+                      {chat.message}
+                    </p>
+                    {chat.adminReply ? (
+                      <div style={{ padding: "8px 12px", borderRadius: "8px", background: "#ECFDF5", border: "1px solid #A7F3D0" }}>
+                        <span style={{ fontSize: "0.72rem", fontWeight: 700, color: "#059669" }}>Balasan Admin:</span>
+                        <p style={{ margin: "2px 0 0", fontSize: "0.82rem", color: "#065F46" }}>{chat.adminReply}</p>
+                      </div>
+                    ) : (
+                      <div style={{ display: "flex", gap: "6px", alignItems: "flex-end" }}>
+                        <textarea
+                          value={chatReplyText[chat.id] || ""}
+                          onChange={(e) => setChatReplyText((prev) => ({ ...prev, [chat.id]: e.target.value }))}
+                          placeholder={`Balas #${chat.id}...`}
+                          rows={2}
+                          style={{
+                            flex: 1,
+                            padding: "8px 10px",
+                            border: "1px solid #D1D5DB",
+                            borderRadius: "8px",
+                            fontSize: "0.82rem",
+                            outline: "none",
+                            resize: "none",
+                          }}
+                        />
+                        <button
+                          type="button"
+                          onClick={() => handleChatReply(chat.id)}
+                          disabled={isReplying === chat.id || !chatReplyText[chat.id]?.trim()}
+                          className="btn-primary"
+                          style={{ minHeight: "36px", padding: "0 12px", fontSize: "0.78rem" }}
+                        >
+                          {isReplying === chat.id ? <Loader2 size={14} className="animate-spin" /> : <Send size={14} />}
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <div className="admin-empty-table-state">
+                <div className="admin-empty-icon">
+                  <MessageSquare size={24} />
+                </div>
+                <span style={{ fontSize: "0.88rem", fontWeight: 700, color: "var(--navy)" }}>
+                  Belum ada pesan chat.
+                </span>
+              </div>
+            )}
           </section>
         </div>
       ) : (

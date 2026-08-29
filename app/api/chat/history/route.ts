@@ -11,7 +11,7 @@ export async function GET() {
   try {
     const db = await getDatabase();
     const result = await db.execute({
-      sql: "SELECT id, user_name, message, admin_reply, forwarded_to_admin, created_at FROM chat_messages WHERE user_email = ? ORDER BY created_at ASC",
+      sql: "SELECT id, user_email, user_name, message, admin_reply, created_at FROM chat_messages WHERE user_email = ? ORDER BY created_at ASC",
       args: [user.email],
     });
 
@@ -20,7 +20,6 @@ export async function GET() {
       userName: row.user_name,
       message: row.message,
       adminReply: row.admin_reply ?? null,
-      forwarded: Boolean(row.forwarded_to_admin),
       createdAt: row.created_at,
     }));
 
