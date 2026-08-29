@@ -69,6 +69,35 @@ export async function POST(request: NextRequest) {
         }, 200, requestId);
       }
 
+      if (completed && (!content || content.trim().length <= 50)) {
+        const settleResult = await db.execute({
+          sql: `UPDATE credit_reservations SET status = 'CAPTURED', settled_at = ? WHERE generation_id = ? AND status = 'RESERVED'`,
+          args: [now, generationId],
+        });
+        if ((settleResult.rowsAffected ?? 0) > 0) {
+          await db.execute({
+            sql: `UPDATE users SET reserved_credits = MAX(0, COALESCE(reserved_credits, 0) - 25), updated_at = ? WHERE email = ?`,
+            args: [now, user.email],
+          });
+        }
+        await db.execute({
+          sql: "UPDATE document_generations SET status = 'COMPLETED', completed_at = ? WHERE id = ? AND user_email = ?",
+          args: [now, generationId, user.email],
+        });
+        const userRow = await db.execute({
+          sql: "SELECT available_credits, reserved_credits FROM users WHERE email = ?",
+          args: [user.email],
+        });
+        const u = userRow.rows[0] as unknown as { available_credits: number; reserved_credits: number } | undefined;
+        return apiSuccess({
+          status: "COMPLETED",
+          generationId,
+          credits: u?.available_credits ?? 0,
+          reservedCredits: u?.reserved_credits ?? 0,
+          message: `Dokumen ${documentType} selesai. Kredit telah dikonfirmasi.`,
+        }, 200, requestId);
+      }
+
       if (failureReason) {
         await releaseCredits(db, { generationId, reason: failureReason });
 
