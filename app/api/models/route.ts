@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { getCurrentUser } from "@/lib/auth";
 import { getDatabase } from "@/db";
-import { classifyModel, type ModelItem } from "@/lib/models-config";
+import { classifyModel, getCachedModels, setCachedModels, type ModelItem } from "@/lib/models-config";
 
 const PROVIDER_BASE_URL = "https://bandelbanget.xyz/v1";
 
@@ -33,6 +33,11 @@ export async function GET() {
     }
   }
 
+  const cached = getCachedModels();
+  if (cached) {
+    return NextResponse.json({ data: cached, isPro });
+  }
+
   try {
     const upstreamResponse = await fetch(`${PROVIDER_BASE_URL}/models`, {
       headers: { Authorization: `Bearer ${apiKey}` },
@@ -55,6 +60,8 @@ export async function GET() {
         if (a.isFlagship !== b.isFlagship) return a.isFlagship ? 1 : -1;
         return a.name.localeCompare(b.name);
       });
+
+      setCachedModels(classifiedList);
 
       return NextResponse.json({ data: classifiedList, isPro });
     }

@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { getDatabase } from "@/db";
 import { getCurrentAdmin } from "@/lib/auth";
-import { classifyModel } from "@/lib/models-config";
+import { classifyModel, getCachedModels, setCachedModels, type ModelItem } from "@/lib/models-config";
 
 const PROVIDER_BASE_URL = "https://bandelbanget.xyz/v1";
 
@@ -46,33 +46,47 @@ export async function GET() {
     };
 
     if (apiKey) {
-      try {
-        const modelsRes = await fetch(`${PROVIDER_BASE_URL}/models`, {
-          headers: { Authorization: `Bearer ${apiKey}` },
-        });
-        if (modelsRes.ok) {
-          const modelsPayload = await modelsRes.json();
-          if (Array.isArray(modelsPayload.data)) {
-            providerInfo.modelCount = modelsPayload.data.length;
-            providerInfo.models = modelsPayload.data.map(
-              (m: { id?: string; name?: string; display_name?: string }) => {
-                const id = m.id ?? "";
-                const name = m.name || m.display_name || id;
-                const classified = classifyModel(id, name);
-                return {
-                  id,
-                  name,
-                  isFlagship: classified.isFlagship,
-                  tier: classified.tier,
-                  successRate: classified.successRate,
-                  healthStatus: classified.healthStatus,
-                };
-              },
-            );
+      const cached = getCachedModels();
+      if (cached) {
+        providerInfo.modelCount = cached.length;
+        providerInfo.models = cached.map((m) => ({
+          id: m.id,
+          name: m.name,
+          isFlagship: m.isFlagship,
+          tier: m.tier,
+          successRate: m.successRate,
+          healthStatus: m.healthStatus,
+        }));
+      } else {
+        try {
+          const modelsRes = await fetch(`${PROVIDER_BASE_URL}/models`, {
+            headers: { Authorization: `Bearer ${apiKey}` },
+          });
+          if (modelsRes.ok) {
+            const modelsPayload = await modelsRes.json();
+            if (Array.isArray(modelsPayload.data)) {
+              const classified: ModelItem[] = modelsPayload.data.map(
+                (m: { id?: string; name?: string; display_name?: string }) => {
+                  const id = m.id ?? "";
+                  const name = m.name || m.display_name || id;
+                  return classifyModel(id, name);
+                },
+              );
+              setCachedModels(classified);
+              providerInfo.modelCount = classified.length;
+              providerInfo.models = classified.map((m) => ({
+                id: m.id,
+                name: m.name,
+                isFlagship: m.isFlagship,
+                tier: m.tier,
+                successRate: m.successRate,
+                healthStatus: m.healthStatus,
+              }));
+            }
           }
+        } catch {
+          // Fallback gracefully
         }
-      } catch {
-        // Fallback gracefully
       }
     }
 
