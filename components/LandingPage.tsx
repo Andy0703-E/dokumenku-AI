@@ -92,31 +92,17 @@ const WORKFLOW_STEPS = [
 
 const PLANS = [
   {
-    name: "Starter",
-    price: "Rp 0",
-    period: "selamanya",
-    desc: "Coba gratis untuk memulai",
-    features: [
-      "3 Kredit (3 set 4 dokumen)",
-      "Semua fitur Studio Generator",
-      "Ekspor ZIP & MD",
-      "Dukungan komunitas",
-    ],
-    cta: "Mulai Gratis",
-    popular: false,
-  },
-  {
     name: "Pro Studio",
     price: "Rp 20.000",
     period: "sekali beli",
     desc: "Sekali bayar, pakai selamanya",
     features: [
       "100 Kredit (100 set 4 dokumen)",
-      "Priority Processing",
+      "Semua model AI (Starter & Flagship)",
       "Ekspor ZIP & MD",
       "Dukungan prioritas",
     ],
-    cta: "Pilih Pro Studio",
+    cta: "Beli Sekarang",
     popular: true,
   },
   {
@@ -130,7 +116,7 @@ const PLANS = [
       "SLA & dukungan khusus",
       "Onboarding & training",
     ],
-    cta: "Hubungi Kami",
+    cta: "Hubungi via WhatsApp",
     popular: false,
   },
 ];
@@ -277,7 +263,7 @@ export default function LandingPage({ onStart }: LandingPageProps) {
 
           <div className="trust-points-row">
             <span className="trust-check">
-              <Check size={16} strokeWidth={3} /> 1 Kredit Gratis Starter
+              <Check size={16} strokeWidth={3} /> 1 Kredit Gratis Saat Daftar
             </span>
             <span style={{ color: "var(--text-faint)" }}>•</span>
             <span>Tanpa Langganan</span>
@@ -588,8 +574,6 @@ export default function LandingPage({ onStart }: LandingPageProps) {
                     window.location.assign("/pricing");
                   } else if (plan.name === "Enterprise") {
                     window.location.assign("https://wa.me/6285754494990?text=Halo%20Dokumenku%20AI%2C%20saya%20tertarik%20dengan%20paket%20Enterprise.");
-                  } else {
-                    handleStartAction();
                   }
                 }}
               >

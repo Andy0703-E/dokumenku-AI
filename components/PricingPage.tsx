@@ -35,22 +35,6 @@ import { toast } from "sonner";
 
 const plans = [
   {
-    name: "Starter",
-    badge: "Mulai",
-    price: "Rp 20.000",
-    period: "sekali beli",
-    desc: "Paket dasar untuk mencoba",
-    features: [
-      "100 Kredit (100 set 4 dokumen)",
-      "Semua fitur Studio Generator",
-      "Ekspor ZIP & MD",
-      "Dukungan komunitas",
-    ],
-    cta: "Beli Sekarang",
-    ctaHref: "/pricing",
-    popular: false,
-  },
-  {
     name: "Pro Studio",
     badge: "Paling Populer",
     price: "Rp 20.000",
@@ -58,11 +42,12 @@ const plans = [
     desc: "Sekali bayar, pakai selamanya",
     features: [
       "100 Kredit (100 set 4 dokumen)",
+      "Semua model AI (Starter & Flagship)",
       "Priority Processing",
       "Ekspor ZIP & MD",
       "Dukungan prioritas",
     ],
-    cta: "Pilih Pro Studio",
+    cta: "Beli Sekarang",
     ctaHref: "/login",
     popular: true,
   },
@@ -85,16 +70,16 @@ const plans = [
 ];
 
 const matrixFeatures = [
-  { feature: "Jumlah Dokumen per Kredit", starter: "4 Dokumen", pro: "4 Dokumen", enterprise: "4 Dokumen" },
-  { feature: "PRD.md & User Stories", starter: "✓", pro: "✓", enterprise: "✓" },
-  { feature: "TECH-STACK.md Arsitektur", starter: "✓", pro: "✓", enterprise: "✓" },
-  { feature: "UI-UX.md & User Flow", starter: "✓", pro: "✓", enterprise: "✓" },
-  { feature: "SCHEMA.md ERD & SQL", starter: "✓", pro: "✓", enterprise: "✓" },
-  { feature: "Multi-Model AI Engine", starter: "✓", pro: "✓", enterprise: "✓" },
-  { feature: "Ekspor Single Markdown (.md)", starter: "✓", pro: "✓", enterprise: "✓" },
-  { feature: "Ekspor Bundel Arsip (.ZIP)", starter: "✓", pro: "✓", enterprise: "✓" },
-  { feature: "Kecepatan Generasi", starter: "Standar", pro: "Prioritas Cepat", enterprise: "Ultra Prioritas" },
-  { feature: "Dukungan Pelanggan", starter: "Komunitas", pro: "Email 24 Jam", enterprise: "Dedicated Manager" },
+  { feature: "Jumlah Dokumen per Kredit", pro: "4 Dokumen", enterprise: "4 Dokumen" },
+  { feature: "PRD.md & User Stories", pro: "✓", enterprise: "✓" },
+  { feature: "TECH-STACK.md Arsitektur", pro: "✓", enterprise: "✓" },
+  { feature: "UI-UX.md & User Flow", pro: "✓", enterprise: "✓" },
+  { feature: "SCHEMA.md ERD & SQL", pro: "✓", enterprise: "✓" },
+  { feature: "Multi-Model AI Engine", pro: "✓", enterprise: "✓" },
+  { feature: "Ekspor Single Markdown (.md)", pro: "✓", enterprise: "✓" },
+  { feature: "Ekspor Bundel Arsip (.ZIP)", pro: "✓", enterprise: "✓" },
+  { feature: "Kecepatan Generasi", pro: "Prioritas Cepat", enterprise: "Ultra Prioritas" },
+  { feature: "Dukungan Pelanggan", pro: "Email 24 Jam", enterprise: "Dedicated Manager" },
 ];
 
 const faqItems = [
@@ -169,13 +154,7 @@ export default function PricingPage() {
   }, []);
 
   async function handleSelectPlan(planName: string) {
-    if (planName === "Starter") {
-      if (isAuthenticated) {
-        window.location.assign("/studio");
-      } else {
-        window.location.assign("/login");
-      }
-    } else if (planName === "Pro Studio") {
+    if (planName === "Pro Studio") {
       if (!isAuthenticated) {
         toast.info("Silakan masuk atau daftar akun terlebih dahulu untuk membeli paket Pro Studio.");
         window.location.assign("/login");
@@ -207,7 +186,7 @@ export default function PricingPage() {
         setIsCreatingOrder(false);
       }
     } else if (planName === "Enterprise") {
-      window.location.assign("mailto:dadung2707@gmail.com?subject=Inquiry%20Enterprise%20Dokumenku%20AI");
+      window.location.assign("https://wa.me/6285754494990?text=Halo%20Dokumenku%20AI%2C%20saya%20tertarik%20dengan%20paket%20Enterprise.");
     }
   }
 
@@ -407,7 +386,6 @@ export default function PricingPage() {
             <thead>
               <tr>
                 <th>Fitur & Kapabilitas</th>
-                <th>Starter</th>
                 <th style={{ color: "var(--cobalt)", fontWeight: 800 }}>Pro Studio</th>
                 <th>Enterprise</th>
               </tr>
@@ -416,7 +394,6 @@ export default function PricingPage() {
               {matrixFeatures.map((row) => (
                 <tr key={row.feature}>
                   <td style={{ fontWeight: 650 }}>{row.feature}</td>
-                  <td style={{ color: "var(--text-muted)" }}>{row.starter}</td>
                   <td style={{ color: "var(--cobalt)", fontWeight: 800 }}>{row.pro}</td>
                   <td style={{ color: "var(--text-muted)" }}>{row.enterprise}</td>
                 </tr>

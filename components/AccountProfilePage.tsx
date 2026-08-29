@@ -305,7 +305,7 @@ export default function AccountProfilePage() {
                         border: "1px solid #BBF7D0",
                       }}
                     >
-                      🌱 Akun Starter
+                      🌱 Akun Gratis
                     </span>
                   )}
                 </div>
@@ -366,7 +366,7 @@ export default function AccountProfilePage() {
                 {data.isPro || data.role === "admin" ? "Semua Model (Pro)" : "Model Starter"}
               </strong>
               <span className="kpi-sub" style={{ color: "var(--cobalt)" }}>
-                • {data.isPro || data.role === "admin" ? "Flagship + Starter Aktif" : "GPT-4o Mini, Flash, Haiku"}
+                • {data.isPro || data.role === "admin" ? "Flagship + Starter Aktif" : "DeepSeek, GLM, Hy3, Auto"}
               </span>
             </div>
           </article>
