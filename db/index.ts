@@ -1430,3 +1430,42 @@ export async function getUserProjects(
       updatedAt: row.updated_at as string,
     }));
 }
+
+export type ProjectDocument = {
+  documentType: string;
+  fileName: string;
+  content: string;
+  status: string;
+};
+
+export async function getProjectDocuments(
+  db: Client,
+  userEmail: string,
+  projectId: string,
+): Promise<{ projectName: string; selectedModel: string; documents: ProjectDocument[] }> {
+  const normEmail = userEmail.trim().toLowerCase();
+
+  const meta = await db.execute({
+    sql: `SELECT COALESCE(MAX(project_name), '') AS project_name, COALESCE(MAX(selected_model), '') AS selected_model
+      FROM project_documents WHERE LOWER(user_email) = ? AND project_id = ?`,
+    args: [normEmail, projectId],
+  });
+
+  const docs = await db.execute({
+    sql: `SELECT document_type, file_name, content, status
+      FROM project_documents WHERE LOWER(user_email) = ? AND project_id = ?
+      ORDER BY CASE document_type WHEN 'PRD' THEN 1 WHEN 'TECH_SPEC' THEN 2 WHEN 'UI_UX' THEN 3 WHEN 'AI_CONTEXT' THEN 4 END`,
+    args: [normEmail, projectId],
+  });
+
+  return {
+    projectName: (meta.rows[0]?.project_name as string) || "",
+    selectedModel: (meta.rows[0]?.selected_model as string) || "",
+    documents: docs.rows.map((row) => ({
+      documentType: row.document_type as string,
+      fileName: row.file_name as string,
+      content: row.content as string,
+      status: row.status as string,
+    })),
+  };
+}

@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { toast } from "sonner";
 
 import { EMPTY_FILES } from "@/lib/stream-parser";
@@ -34,8 +34,46 @@ export function useDocumentGenerator(
   const [activeFile, setActiveFile] = useState<FileName>("PRD.md");
   const [reasoningContent, setReasoningContent] = useState("");
   const [lastError, setLastError] = useState<string | null>(null);
+  const [isLoadingDocs, setIsLoadingDocs] = useState(false);
 
   const hasResult = DOCUMENT_STEPS.every((file) => files[file].trim().length > 0);
+
+  // Load existing documents from DB when opening a project
+  useEffect(() => {
+    if (!projectId || projectId === "default_project") return;
+
+    let cancelled = false;
+    setIsLoadingDocs(true);
+
+    fetch(`/api/projects/${encodeURIComponent(projectId)}`)
+      .then((r) => r.json())
+      .then((json) => {
+        if (cancelled) return;
+        const data = json.data;
+        if (data?.documents?.length > 0) {
+          const loaded = { ...EMPTY_FILES };
+          const docTypeToFileName: Record<string, FileName> = {
+            PRD: "PRD.md",
+            TECH_SPEC: "TECH-STACK.md",
+            UI_UX: "UI-UX.md",
+            AI_CONTEXT: "SCHEMA.md",
+          };
+          for (const doc of data.documents) {
+            const fileName = docTypeToFileName[doc.documentType];
+            if (fileName && doc.content) {
+              loaded[fileName] = doc.content;
+            }
+          }
+          setFiles(loaded);
+        }
+      })
+      .catch(() => {})
+      .finally(() => {
+        if (!cancelled) setIsLoadingDocs(false);
+      });
+
+    return () => { cancelled = true; };
+  }, [projectId]);
 
   const updateFileContent = useCallback((fileName: FileName, content: string) => {
     setFiles((prev) => ({ ...prev, [fileName]: content }));
@@ -251,6 +289,7 @@ export function useDocumentGenerator(
   return {
     files,
     isGenerating,
+    isLoadingDocs,
     progress,
     activeFile,
     hasResult,

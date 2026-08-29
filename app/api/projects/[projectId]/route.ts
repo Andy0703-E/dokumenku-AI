@@ -1,6 +1,29 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getCurrentUser } from "@/lib/auth";
-import { getDatabase } from "@/db";
+import { getDatabase, getProjectDocuments } from "@/db";
+
+export async function GET(
+  _request: NextRequest,
+  { params }: { params: Promise<{ projectId: string }> },
+) {
+  const user = await getCurrentUser();
+  if (!user) {
+    return NextResponse.json({ error: "Silakan masuk terlebih dahulu." }, { status: 401 });
+  }
+
+  const { projectId } = await params;
+  if (!projectId || typeof projectId !== "string") {
+    return NextResponse.json({ error: "ID proyek tidak valid." }, { status: 400 });
+  }
+
+  try {
+    const db = await getDatabase();
+    const data = await getProjectDocuments(db, user.email, projectId);
+    return NextResponse.json({ data });
+  } catch {
+    return NextResponse.json({ error: "Gagal memuat dokumen proyek." }, { status: 500 });
+  }
+}
 
 export async function DELETE(
   _request: NextRequest,

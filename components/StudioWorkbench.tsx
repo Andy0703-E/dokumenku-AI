@@ -95,6 +95,7 @@ export default function StudioWorkbench({
   const {
     files,
     isGenerating,
+    isLoadingDocs,
     progress,
     activeFile,
     hasResult,
@@ -104,7 +105,7 @@ export default function StudioWorkbench({
     reviseDocument,
     generateFromPrompt,
     resetAll,
-  } = useDocumentGenerator();
+  } = useDocumentGenerator(projectId, initialProjectName);
 
   useEffect(() => {
     if (initialPrompt) {
@@ -757,6 +758,12 @@ export default function StudioWorkbench({
 
             {/* Document Content View with Line Gutter */}
             <div className="doc-content-container">
+              {isLoadingDocs ? (
+                <div style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", padding: "60px 24px", color: "var(--text-muted, #64748B)" }}>
+                  <div style={{ width: "36px", height: "36px", border: "3px solid #E2E8F0", borderTopColor: "var(--cobalt, #2563EB)", borderRadius: "50%", animation: "spin 0.8s linear infinite", marginBottom: "12px" }} />
+                  <span style={{ fontSize: "0.88rem", fontWeight: 600 }}>Memuat dokumen proyek...</span>
+                </div>
+              ) : (
               <div className="doc-scrollable-paper">
                 {isEditMode ? (
                   <div className="doc-editor-wrap">
@@ -815,6 +822,7 @@ export default function StudioWorkbench({
                   </div>
                 )}
               </div>
+              )}
             </div>
 
             {/* Bottom Status Footer Bar */}
