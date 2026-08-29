@@ -112,6 +112,45 @@ export async function POST(request: NextRequest) {
     const parts = rawMessage.split(/\s+/).filter(Boolean);
     const command = parts[0]?.toUpperCase();
 
+    // ── Handle Chat Reply: #<chatId> <reply> or BALAS <chatId> <reply> ──
+    const chatReplyMatch = rawMessage.match(/^(?:#(\d+)|BALAS\s+(\d+))\s+([\s\S]+)$/i);
+    if (chatReplyMatch) {
+      const chatId = Number(chatReplyMatch[1] || chatReplyMatch[2]);
+      const replyText = (chatReplyMatch[3] || "").trim();
+
+      if (!chatId || !replyText) {
+        await sendWhatsAppMessage(sender, "⚠️ Format: *#<ID> <pesan balasan>* atau *BALAS <ID> <pesan>*").catch(() => {});
+        return NextResponse.json({ ok: false, error: "Invalid chat reply format" }, { status: 400 });
+      }
+
+      const chatResult = await db.execute({
+        sql: "SELECT id, user_email, user_name, message FROM chat_messages WHERE id = ?",
+        args: [chatId],
+      });
+      const chat = chatResult.rows[0] as unknown as { id: number; user_email: string | null; user_name: string; message: string } | undefined;
+
+      if (!chat) {
+        await sendWhatsAppMessage(sender, `⚠️ Chat #${chatId} tidak ditemukan.`).catch(() => {});
+        return NextResponse.json({ ok: false, error: "Chat not found" }, { status: 404 });
+      }
+
+      await db.execute({
+        sql: "UPDATE chat_messages SET admin_reply = ? WHERE id = ?",
+        args: [replyText, chatId],
+      });
+
+      await sendWhatsAppMessage(sender, `✅ Balasan untuk chat #${chatId} (${chat.user_name}) telah terkirim ke user.`).catch(() => {});
+
+      if (externalEventId) {
+        await db.execute({
+          sql: "UPDATE webhook_events SET status = 'PROCESSED', processed_at = ? WHERE provider = 'fonnte' AND external_event_id = ?",
+          args: [new Date().toISOString(), externalEventId],
+        });
+      }
+
+      return NextResponse.json({ ok: true, chatReply: true, chatId });
+    }
+
     // ── Handle 'ACC' Command ────────────────────────────────────────
     if (command === "ACC" || lower.startsWith("acc")) {
       const targetInv = extractInvoiceId(rawMessage);

@@ -35,7 +35,19 @@ export async function POST(request: NextRequest) {
 
     let forwarded = false;
     const adminPhone = getAdminPhone();
-    const waMessage = `💬 *Chat Baru dari Dokumenku AI*\n\n👤 *Nama:* ${userName}\n📧 *Email:* ${userEmail || "Guest"}\n🆔 *Chat ID:* #${chatId}\n\n💬 *Pesan:*\n${userMessage}\n\n---\nBalas pesan ini langsung di WhatsApp untuk membalas user.`;
+    const waMessage = `💬 *Chat Baru dari Dokumenku AI*
+
+👤 *Nama:* ${userName}
+📧 *Email:* ${userEmail}
+🆔 *Chat ID:* #${chatId}
+
+💬 *Pesan:*
+${userMessage}
+
+───────────────
+📝 *Balas chat ini:*
+Ketik: *#${chatId} <pesan balasan>*
+Contoh: *#${chatId} Halo, ada yang bisa kami bantu?*`;
 
     try {
       const waResult = await sendWhatsAppMessage(adminPhone, waMessage);
