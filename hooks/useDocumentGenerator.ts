@@ -30,6 +30,7 @@ export function useDocumentGenerator() {
   const [progress, setProgress] = useState(0);
   const [activeFile, setActiveFile] = useState<FileName>("PRD.md");
   const [reasoningContent, setReasoningContent] = useState("");
+  const [lastError, setLastError] = useState<string | null>(null);
 
   const hasResult = DOCUMENT_STEPS.every((file) => files[file].trim().length > 0);
 
@@ -116,6 +117,7 @@ export function useDocumentGenerator() {
       setIsGenerating(true);
       setReasoningContent("");
       setProgress(5);
+      setLastError(null);
 
       let generationId: string | null = null;
       let completed = false;
@@ -214,7 +216,9 @@ export function useDocumentGenerator() {
         return true;
       } catch (error) {
         setProgress(0);
-        toast.error(error instanceof Error ? error.message : "Terjadi kesalahan saat pembuatan dokumen.");
+        const msg = error instanceof Error ? error.message : "Terjadi kesalahan saat pembuatan dokumen.";
+        setLastError(msg);
+        toast.error(msg);
         return false;
       } finally {
         setIsGenerating(false);
@@ -245,6 +249,7 @@ export function useDocumentGenerator() {
     activeFile,
     hasResult,
     reasoningContent,
+    lastError,
     setActiveFile,
     updateFileContent,
     reviseDocument,

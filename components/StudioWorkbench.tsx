@@ -94,6 +94,7 @@ export default function StudioWorkbench({
     progress,
     activeFile,
     hasResult,
+    lastError,
     setActiveFile,
     updateFileContent,
     reviseDocument,
@@ -449,7 +450,7 @@ export default function StudioWorkbench({
                   <div className="provider-alert-amber" style={{ marginTop: "4px" }} role="alert">
                     <AlertTriangle size={15} style={{ flexShrink: 0, marginTop: "1px" }} />
                     <span>
-                      Server upstream melaporkan model ini 0% success (downtime). Disarankan beralih ke <strong>deepseek-v4-flash-0731</strong> (Starter) atau <strong>glm-5.3</strong> (Pro).
+                      Server upstream melaporkan model ini 0% success (downtime). Disarankan beralih ke <strong>deepseek-v4-flash</strong> (Starter) atau <strong>glm-5.3</strong> (Pro).
                     </span>
                   </div>
                 ) : (
@@ -472,6 +473,13 @@ export default function StudioWorkbench({
                 </div>
               )}
             </div>
+
+            {lastError && (
+              <div className="provider-alert-amber" style={{ marginTop: "6px", background: "#FEF2F2", borderColor: "#FECACA", color: "#991B1B" }} role="alert">
+                <AlertTriangle size={15} style={{ flexShrink: 0, marginTop: "1px" }} />
+                <span>{lastError}</span>
+              </div>
+            )}
 
             {/* Brief Input Textarea */}
             <div className="brief-input-wrap">
@@ -519,43 +527,16 @@ export default function StudioWorkbench({
 
             {/* Out of Credits Alert Banner */}
             {creditsRemaining <= 0 && (
-              <div className="studio-out-of-credits-banner" role="alert">
-                <div style={{ display: "flex", alignItems: "flex-start", gap: "10px" }}>
-                  <AlertTriangle size={18} style={{ color: "#DC2626", flexShrink: 0, marginTop: "2px" }} />
-                  <div style={{ flex: 1 }}>
-                    <strong style={{ fontSize: "0.85rem", color: "#991B1B", display: "block", marginBottom: "2px" }}>
-                      Kredit Anda Telah Habis (0 Kredit)
-                    </strong>
-                    <p style={{ fontSize: "0.76rem", color: "#7F1D1D", margin: "0 0 8px", lineHeight: "1.45" }}>
-                      {isAuthenticated
-                        ? "Anda telah menggunakan seluruh kredit akun. Beli paket Pro Studio untuk menambah saldo kredit."
-                        : "Silakan masuk atau daftar akun, lalu beli paket Pro Studio untuk mulai generate dokumen."}
-                    </p>
-                    <div style={{ display: "flex", gap: "6px", flexWrap: "wrap" }}>
-                      {!isAuthenticated && (
-                        <a
-                          href="/login"
-                          className="btn-primary"
-                          style={{ minHeight: "30px", padding: "0 10px", fontSize: "0.74rem" }}
-                        >
-                          Daftar Akun Gratis
-                        </a>
-                      )}
-                      <a
-                        href="/pricing"
-                        className="btn-secondary"
-                        style={{
-                          minHeight: "30px",
-                          padding: "0 10px",
-                          fontSize: "0.74rem",
-                          borderColor: "#FCA5A5",
-                          color: "#991B1B",
-                        }}
-                      >
-                        Lihat Paket Harga
-                      </a>
-                    </div>
-                  </div>
+              <div className="studio-out-of-credits-banner" role="alert" style={{ padding: "10px 14px", marginTop: "8px" }}>
+                <div style={{ display: "flex", alignItems: "center", gap: "8px", flexWrap: "wrap" }}>
+                  <AlertTriangle size={15} style={{ color: "#DC2626", flexShrink: 0 }} />
+                  <span style={{ fontSize: "0.8rem", color: "#991B1B", fontWeight: 600 }}>Kredit habis.</span>
+                  <span style={{ fontSize: "0.76rem", color: "#7F1D1D" }}>
+                    {isAuthenticated ? "Beli paket untuk melanjutkan." : "Masuk & beli paket untuk mulai."}
+                  </span>
+                  <a href="/pricing" className="btn-secondary" style={{ minHeight: "26px", padding: "0 10px", fontSize: "0.72rem", borderColor: "#FCA5A5", color: "#991B1B", marginLeft: "auto" }}>
+                    Lihat Harga
+                  </a>
                 </div>
               </div>
             )}

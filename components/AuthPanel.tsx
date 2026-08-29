@@ -16,6 +16,7 @@ import {
   LogIn,
   Check,
   Loader2,
+  AlertTriangle,
 } from "lucide-react";
 import { toast } from "sonner";
 
@@ -35,6 +36,7 @@ export default function AuthPanel({ initialMode = "login" }: AuthPanelProps) {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [emailError, setEmailError] = useState("");
   const [passwordError, setPasswordError] = useState("");
+  const [loginError, setLoginError] = useState("");
 
   function validateEmail(val: string): boolean {
     const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -79,6 +81,7 @@ export default function AuthPanel({ initialMode = "login" }: AuthPanelProps) {
     }
 
     setIsSubmitting(true);
+    setLoginError("");
     const endpoint = mode === "login" ? "/api/auth/login" : "/api/auth/register";
 
     try {
@@ -94,7 +97,9 @@ export default function AuthPanel({ initialMode = "login" }: AuthPanelProps) {
         isAdmin?: boolean;
       };
       if (!response.ok) {
-        throw new Error(payload.error || "Autentikasi gagal diproses.");
+        const errorMsg = payload.error || "Autentikasi gagal diproses.";
+        setLoginError(typeof errorMsg === "string" ? errorMsg : "Autentikasi gagal diproses.");
+        throw new Error(typeof errorMsg === "string" ? errorMsg : "Autentikasi gagal diproses.");
       }
 
       if (mode === "register") {
@@ -206,7 +211,7 @@ export default function AuthPanel({ initialMode = "login" }: AuthPanelProps) {
               role="tab"
               aria-selected={mode === "login"}
               className={`auth-tab-pill-btn ${mode === "login" ? "active" : ""}`}
-              onClick={() => setMode("login")}
+              onClick={() => { setMode("login"); setLoginError(""); }}
             >
               Masuk
             </button>
@@ -215,7 +220,7 @@ export default function AuthPanel({ initialMode = "login" }: AuthPanelProps) {
               role="tab"
               aria-selected={mode === "register"}
               className={`auth-tab-pill-btn ${mode === "register" ? "active" : ""}`}
-              onClick={() => setMode("register")}
+              onClick={() => { setMode("register"); setLoginError(""); }}
             >
               Daftar
             </button>
@@ -276,6 +281,7 @@ export default function AuthPanel({ initialMode = "login" }: AuthPanelProps) {
                   onChange={(e) => {
                     setEmail(e.target.value);
                     if (emailError) validateEmail(e.target.value);
+                    if (loginError) setLoginError("");
                   }}
                   onBlur={() => validateEmail(email)}
                   placeholder="nama@email.com"
@@ -299,6 +305,7 @@ export default function AuthPanel({ initialMode = "login" }: AuthPanelProps) {
                   onChange={(e) => {
                     setPassword(e.target.value);
                     if (passwordError) validatePassword(e.target.value);
+                    if (loginError) setLoginError("");
                   }}
                   onBlur={() => validatePassword(password)}
                   placeholder="••••••••••••"
@@ -365,6 +372,25 @@ export default function AuthPanel({ initialMode = "login" }: AuthPanelProps) {
               )}
             </button>
           </form>
+
+          {loginError && (
+            <div className="auth-login-error" style={{
+              marginTop: "16px",
+              padding: "12px 16px",
+              borderRadius: "8px",
+              background: "#FEF2F2",
+              border: "1px solid #FECACA",
+              color: "#991B1B",
+              fontSize: "0.85rem",
+              fontWeight: 500,
+              display: "flex",
+              alignItems: "center",
+              gap: "8px",
+            }}>
+              <AlertTriangle size={16} />
+              {loginError}
+            </div>
+          )}
 
           {/* Footer Switch Link */}
           <div className="auth-footer-link">
