@@ -1,7 +1,6 @@
 "use client";
 
 import { useEffect, useState, useCallback } from "react";
-import Link from "next/link";
 import { FolderOpen, Plus, Sparkles, FileText, Clock, ArrowRight, Trash2 } from "lucide-react";
 
 type Project = {
@@ -20,6 +19,8 @@ export default function StudioPage() {
   const [newName, setNewName] = useState("");
   const [newPrompt, setNewPrompt] = useState("");
   const [isCreating, setIsCreating] = useState(false);
+  const [deleteTarget, setDeleteTarget] = useState<Project | null>(null);
+  const [isDeleting, setIsDeleting] = useState(false);
 
   const loadProjects = useCallback(async () => {
     setIsLoading(true);
@@ -37,6 +38,25 @@ export default function StudioPage() {
   useEffect(() => {
     void loadProjects();
   }, [loadProjects]);
+
+  const handleDeleteProject = async () => {
+    if (!deleteTarget) return;
+    setIsDeleting(true);
+    try {
+      const res = await fetch(`/api/projects/${encodeURIComponent(deleteTarget.projectId)}`, {
+        method: "DELETE",
+      });
+      const json = await res.json();
+      if (json.data?.deleted) {
+        setProjects((prev) => prev.filter((p) => p.projectId !== deleteTarget.projectId));
+      }
+    } catch {
+      // silently fail
+    } finally {
+      setIsDeleting(false);
+      setDeleteTarget(null);
+    }
+  };
 
   const handleCreateProject = () => {
     if (!newName.trim() || !newPrompt.trim()) return;
@@ -201,119 +221,156 @@ export default function StudioPage() {
             }}
           >
             {projects.map((p) => (
-              <Link
+              <div
                 key={p.projectId}
-                href={`/studio/${p.projectId}`}
-                style={{ textDecoration: "none" }}
+                style={{
+                  padding: "20px",
+                  borderRadius: "14px",
+                  border: "1px solid var(--border, #E2E8F0)",
+                  background: "#fff",
+                  cursor: "pointer",
+                  transition: "all 0.15s ease",
+                  height: "180px",
+                  display: "flex",
+                  flexDirection: "column",
+                  justifyContent: "space-between",
+                  position: "relative",
+                }}
+                onClick={() => window.location.href = `/studio/${p.projectId}`}
+                onMouseEnter={(e) => {
+                  e.currentTarget.style.borderColor = "var(--cobalt, #2563EB)";
+                  e.currentTarget.style.boxShadow = "0 4px 12px rgba(37,99,235,0.1)";
+                }}
+                onMouseLeave={(e) => {
+                  e.currentTarget.style.borderColor = "var(--border, #E2E8F0)";
+                  e.currentTarget.style.boxShadow = "none";
+                }}
               >
-                <div
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setDeleteTarget(p);
+                  }}
                   style={{
-                    padding: "20px",
-                    borderRadius: "14px",
-                    border: "1px solid var(--border, #E2E8F0)",
-                    background: "#fff",
+                    position: "absolute",
+                    top: "12px",
+                    right: "12px",
+                    width: "30px",
+                    height: "30px",
+                    borderRadius: "8px",
+                    border: "1px solid transparent",
+                    background: "transparent",
                     cursor: "pointer",
-                    transition: "all 0.15s ease",
-                    height: "180px",
                     display: "flex",
-                    flexDirection: "column",
-                    justifyContent: "space-between",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    color: "var(--text-muted, #94A3B8)",
+                    transition: "all 0.15s ease",
+                    opacity: 0,
+                    zIndex: 2,
                   }}
                   onMouseEnter={(e) => {
-                    e.currentTarget.style.borderColor = "var(--cobalt, #2563EB)";
-                    e.currentTarget.style.boxShadow = "0 4px 12px rgba(37,99,235,0.1)";
+                    e.currentTarget.style.background = "#FEE2E2";
+                    e.currentTarget.style.color = "var(--danger, #EF4444)";
+                    e.currentTarget.style.borderColor = "#FECACA";
+                    e.currentTarget.style.opacity = "1";
                   }}
                   onMouseLeave={(e) => {
-                    e.currentTarget.style.borderColor = "var(--border, #E2E8F0)";
-                    e.currentTarget.style.boxShadow = "none";
+                    e.currentTarget.style.background = "transparent";
+                    e.currentTarget.style.color = "var(--text-muted, #94A3B8)";
+                    e.currentTarget.style.borderColor = "transparent";
+                    e.currentTarget.style.opacity = "0";
                   }}
+                  title="Hapus proyek"
                 >
-                  <div>
-                    <div
-                      style={{
-                        display: "flex",
-                        alignItems: "center",
-                        gap: "8px",
-                        marginBottom: "10px",
-                      }}
-                    >
-                      <div
-                        style={{
-                          width: "36px",
-                          height: "36px",
-                          borderRadius: "10px",
-                          background: "var(--cobalt-light, #EFF6FF)",
-                          display: "flex",
-                          alignItems: "center",
-                          justifyContent: "center",
-                          flexShrink: 0,
-                        }}
-                      >
-                        <FileText size={16} color="var(--cobalt, #2563EB)" />
-                      </div>
-                      <h3
-                        style={{
-                          margin: 0,
-                          fontSize: "0.95rem",
-                          fontWeight: 700,
-                          color: "var(--navy, #0F172A)",
-                          overflow: "hidden",
-                          textOverflow: "ellipsis",
-                          whiteSpace: "nowrap",
-                        }}
-                      >
-                        {p.projectName || "Proyek Tanpa Judul"}
-                      </h3>
-                    </div>
-                    {p.selectedModel && (
-                      <span
-                        style={{
-                          display: "inline-block",
-                          fontSize: "0.72rem",
-                          fontWeight: 600,
-                          padding: "2px 8px",
-                          borderRadius: "6px",
-                          background: "var(--bg-soft, #F1F5F9)",
-                          color: "var(--text-muted, #64748B)",
-                          marginBottom: "8px",
-                        }}
-                      >
-                        {p.selectedModel}
-                      </span>
-                    )}
-                  </div>
-
+                  <Trash2 size={14} />
+                </button>
+                <div>
                   <div
                     style={{
                       display: "flex",
                       alignItems: "center",
-                      justifyContent: "space-between",
+                      gap: "8px",
+                      marginBottom: "10px",
                     }}
                   >
                     <div
                       style={{
+                        width: "36px",
+                        height: "36px",
+                        borderRadius: "10px",
+                        background: "var(--cobalt-light, #EFF6FF)",
                         display: "flex",
                         alignItems: "center",
-                        gap: "12px",
-                        fontSize: "0.75rem",
-                        color: "var(--text-muted, #64748B)",
+                        justifyContent: "center",
+                        flexShrink: 0,
                       }}
                     >
-                      <span style={{ display: "inline-flex", alignItems: "center", gap: "4px" }}>
-                        <FileText size={12} /> {p.docCount} dokumen
-                      </span>
-                      <span style={{ display: "inline-flex", alignItems: "center", gap: "4px" }}>
-                        <Clock size={12} />{" "}
-                        {new Date(p.updatedAt).toLocaleDateString("id-ID", {
-                          day: "2-digit",
-                          month: "short",
-                        })}
-                      </span>
+                      <FileText size={16} color="var(--cobalt, #2563EB)" />
                     </div>
-                    <ArrowRight size={16} color="var(--cobalt, #2563EB)" />
+                    <h3
+                      style={{
+                        margin: 0,
+                        fontSize: "0.95rem",
+                        fontWeight: 700,
+                        color: "var(--navy, #0F172A)",
+                        overflow: "hidden",
+                        textOverflow: "ellipsis",
+                        whiteSpace: "nowrap",
+                      }}
+                    >
+                      {p.projectName || "Proyek Tanpa Judul"}
+                    </h3>
                   </div>
+                  {p.selectedModel && (
+                    <span
+                      style={{
+                        display: "inline-block",
+                        fontSize: "0.72rem",
+                        fontWeight: 600,
+                        padding: "2px 8px",
+                        borderRadius: "6px",
+                        background: "var(--bg-soft, #F1F5F9)",
+                        color: "var(--text-muted, #64748B)",
+                        marginBottom: "8px",
+                      }}
+                    >
+                      {p.selectedModel}
+                    </span>
+                  )}
                 </div>
-              </Link>
+
+                <div
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "space-between",
+                  }}
+                >
+                  <div
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      gap: "12px",
+                      fontSize: "0.75rem",
+                      color: "var(--text-muted, #64748B)",
+                    }}
+                  >
+                    <span style={{ display: "inline-flex", alignItems: "center", gap: "4px" }}>
+                      <FileText size={12} /> {p.docCount} dokumen
+                    </span>
+                    <span style={{ display: "inline-flex", alignItems: "center", gap: "4px" }}>
+                      <Clock size={12} />{" "}
+                      {new Date(p.updatedAt).toLocaleDateString("id-ID", {
+                        day: "2-digit",
+                        month: "short",
+                      })}
+                    </span>
+                  </div>
+                  <ArrowRight size={16} color="var(--cobalt, #2563EB)" />
+                </div>
+              </div>
             ))}
           </div>
         )}
@@ -478,6 +535,127 @@ export default function StudioPage() {
                 ) : (
                   <>
                     <Sparkles size={14} /> Mulai
+                  </>
+                )}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Delete Confirmation Modal */}
+      {deleteTarget && (
+        <div
+          style={{
+            position: "fixed",
+            inset: 0,
+            background: "rgba(0,0,0,0.4)",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            zIndex: 9999,
+            padding: "16px",
+          }}
+          onClick={() => !isDeleting && setDeleteTarget(null)}
+        >
+          <div
+            style={{
+              background: "#fff",
+              borderRadius: "16px",
+              padding: "28px",
+              maxWidth: "420px",
+              width: "100%",
+              boxShadow: "0 20px 60px rgba(0,0,0,0.15)",
+            }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div
+              style={{
+                width: "48px",
+                height: "48px",
+                borderRadius: "12px",
+                background: "#FEE2E2",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                marginBottom: "16px",
+              }}
+            >
+              <Trash2 size={22} color="var(--danger, #EF4444)" />
+            </div>
+            <h2
+              style={{
+                margin: "0 0 8px",
+                fontSize: "1.1rem",
+                fontWeight: 800,
+                color: "var(--navy, #0F172A)",
+              }}
+            >
+              Hapus Proyek?
+            </h2>
+            <p
+              style={{
+                margin: "0 0 24px",
+                fontSize: "0.85rem",
+                color: "var(--text-muted, #64748B)",
+                lineHeight: "1.5",
+              }}
+            >
+              Semua dokumen dalam proyek <strong>{deleteTarget.projectName || "Proyek Tanpa Judul"}</strong> akan dihapus permanen. Tindakan ini tidak dapat dibatalkan.
+            </p>
+            <div
+              style={{
+                display: "flex",
+                justifyContent: "flex-end",
+                gap: "10px",
+              }}
+            >
+              <button
+                type="button"
+                className="btn-secondary"
+                onClick={() => setDeleteTarget(null)}
+                disabled={isDeleting}
+                style={{ padding: "10px 18px", fontSize: "0.85rem" }}
+              >
+                Batal
+              </button>
+              <button
+                type="button"
+                onClick={handleDeleteProject}
+                disabled={isDeleting}
+                style={{
+                  padding: "10px 22px",
+                  fontSize: "0.85rem",
+                  fontWeight: 700,
+                  borderRadius: "10px",
+                  border: "none",
+                  background: "var(--danger, #EF4444)",
+                  color: "#fff",
+                  cursor: isDeleting ? "not-allowed" : "pointer",
+                  opacity: isDeleting ? 0.6 : 1,
+                  display: "inline-flex",
+                  alignItems: "center",
+                  gap: "6px",
+                }}
+              >
+                {isDeleting ? (
+                  <>
+                    <span
+                      style={{
+                        width: "14px",
+                        height: "14px",
+                        border: "2px solid rgba(255,255,255,0.3)",
+                        borderTopColor: "#fff",
+                        borderRadius: "50%",
+                        animation: "spin 0.6s linear infinite",
+                        display: "inline-block",
+                      }}
+                    />
+                    Menghapus...
+                  </>
+                ) : (
+                  <>
+                    <Trash2 size={14} /> Hapus
                   </>
                 )}
               </button>
