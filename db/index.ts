@@ -1,32 +1,22 @@
 import { createClient, type Client, type InStatement } from "@libsql/client";
 import { createHmac, randomBytes, randomInt, scryptSync, timingSafeEqual } from "node:crypto";
 
-// ─── Production Guards ──────────────────────────────────────────────
-if (
-  process.env.NODE_ENV === "production"
-) {
-  if (!process.env.TURSO_DATABASE_URL) {
-    throw new Error(
-      "TURSO_DATABASE_CONFIGURATION_REQUIRED: TURSO_DATABASE_URL must be set in production."
-    );
+// ─── Secrets (lazy — validated at runtime, not build time) ───────────
+function getApprovalTokenSecret(): string {
+  const secret = process.env.APPROVAL_TOKEN_SECRET || process.env.APP_SECRET;
+  if (!secret && process.env.NODE_ENV === "production") {
+    throw new Error("SECURITY_REQUIRED: APPROVAL_TOKEN_SECRET (or APP_SECRET) must be set in production.");
   }
-  if (!process.env.APPROVAL_TOKEN_SECRET && !process.env.APP_SECRET) {
-    throw new Error(
-      "SECURITY_REQUIRED: APPROVAL_TOKEN_SECRET (or APP_SECRET) must be set in production."
-    );
-  }
-  if (!process.env.AUDIT_CHAIN_SECRET && !process.env.APP_SECRET) {
-    throw new Error(
-      "SECURITY_REQUIRED: AUDIT_CHAIN_SECRET (or APP_SECRET) must be set in production."
-    );
-  }
+  return secret || "dokumenku-approval-token-secret-2026";
 }
 
-// ─── Secrets ────────────────────────────────────────────────────────
-const APPROVAL_TOKEN_SECRET =
-  process.env.APPROVAL_TOKEN_SECRET || process.env.APP_SECRET || "dokumenku-approval-token-secret-2026";
-const AUDIT_CHAIN_SECRET =
-  process.env.AUDIT_CHAIN_SECRET || process.env.APP_SECRET || "dokumenku-audit-chain-secret-2026";
+function getAuditChainSecret(): string {
+  const secret = process.env.AUDIT_CHAIN_SECRET || process.env.APP_SECRET;
+  if (!secret && process.env.NODE_ENV === "production") {
+    throw new Error("SECURITY_REQUIRED: AUDIT_CHAIN_SECRET (or APP_SECRET) must be set in production.");
+  }
+  return secret || "dokumenku-audit-chain-secret-2026";
+}
 
 const TOKEN_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
 
@@ -62,7 +52,7 @@ export function generateApprovalToken(length = 6): string {
 }
 
 export function hashApprovalToken(token: string): string {
-  return createHmac("sha256", APPROVAL_TOKEN_SECRET)
+  return createHmac("sha256", getApprovalTokenSecret())
     .update(token.toUpperCase().trim())
     .digest("hex");
 }
@@ -373,7 +363,7 @@ export async function insertAuditLogEntry(
     createdAt: now,
   });
 
-  const entryHash = createHmac("sha256", AUDIT_CHAIN_SECRET)
+  const entryHash = createHmac("sha256", getAuditChainSecret())
     .update(canonicalPayload)
     .digest("hex");
 
@@ -410,7 +400,7 @@ export async function verifyAuditLogChain(
   db: DBExecutor,
   customSecretOrKeyMap?: string | Record<number, string>,
 ): Promise<{ ok: boolean; error?: string; tamperedLogId?: number; totalChecked: number }> {
-  const defaultSecret = AUDIT_CHAIN_SECRET;
+  const defaultSecret = getAuditChainSecret();
   const keyMap: Record<number, string> =
     typeof customSecretOrKeyMap === "object" && customSecretOrKeyMap !== null
       ? customSecretOrKeyMap
