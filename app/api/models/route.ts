@@ -2,10 +2,17 @@ import { NextResponse } from "next/server";
 import { getCurrentUser } from "@/lib/auth";
 import { getDatabase } from "@/db";
 import { classifyModel, getCachedModels, setCachedModels, type ModelItem } from "@/lib/models-config";
+import { bootstrapModelHealth } from "@/app/api/admin/model-health/route";
 
 const PROVIDER_BASE_URL = "https://bandelbanget.xyz/v1";
 
+let bootstrapped = false;
+
 export async function GET() {
+  if (!bootstrapped) {
+    bootstrapModelHealth();
+    bootstrapped = true;
+  }
   const apiKey = process.env.BANDELBANGET_API_KEY;
   if (!apiKey) {
     return NextResponse.json(

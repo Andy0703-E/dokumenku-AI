@@ -203,6 +203,13 @@ export function useDocumentGenerator() {
 
         completed = true;
         setProgress(100);
+
+        await fetch("/api/generations/finish", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ generationId, completed: true, documentType: "ALL_DONE", fileName: "ALL_DONE", content: "completed" }),
+        }).catch(() => {});
+
         toast.success("Empat dokumen proyek berhasil dibuat lengkap!");
         return true;
       } catch (error) {

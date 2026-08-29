@@ -28,7 +28,7 @@ export async function POST(request: NextRequest) {
   } = (await request.json().catch(() => ({}))) as unknown as {
     generationId?: string;
     completed?: boolean;
-    documentType?: "PRD" | "TECH_SPEC" | "UI_UX" | "AI_CONTEXT";
+    documentType?: "PRD" | "TECH_SPEC" | "UI_UX" | "AI_CONTEXT" | "ALL_DONE";
     projectId?: string;
     fileName?: string;
     content?: string;
@@ -44,6 +44,14 @@ export async function POST(request: NextRequest) {
       const db = await getDatabase();
       const now = new Date().toISOString();
 
+      if (documentType === "ALL_DONE") {
+        await db.execute({
+          sql: "UPDATE document_generations SET status = 'COMPLETED', completed_at = ? WHERE id = ? AND user_email = ?",
+          args: [now, generationId, user.email],
+        });
+        return apiSuccess({ status: "COMPLETED", generationId, message: "Semua dokumen selesai." }, 200, requestId);
+      }
+
       if (completed && content && content.trim().length > 50) {
         const finalizationResult = await executeAtomicDocumentFinalization(db, {
           userEmail: user.email,
@@ -58,14 +66,19 @@ export async function POST(request: NextRequest) {
           return apiError(ERROR_CODES.DATABASE_TRANSACTION_FAILED, "Gagal menyimpan dokumen ke database. Kredit Anda tetap aman dalam reservasi dan dapat difinalisasi ulang.", 500, requestId);
         }
 
+        await db.execute({
+          sql: "UPDATE document_generations SET status = 'GENERATING', updated_at = ? WHERE id = ? AND user_email = ?",
+          args: [now, generationId, user.email],
+        });
+
         return apiSuccess({
-          status: "COMPLETED",
+          status: "GENERATING",
           generationId,
           credits: finalizationResult.availableCredits ?? 0,
           availableCredits: finalizationResult.availableCredits ?? 0,
           reservedCredits: finalizationResult.reservedCredits ?? 0,
           alreadyProcessed: finalizationResult.alreadyProcessed ?? false,
-          message: `Dokumen ${documentType} berhasil disimpan dan kredit telah dikonfirmasi.`,
+          message: `Dokumen ${documentType} berhasil disimpan.`,
         }, 200, requestId);
       }
 
@@ -83,7 +96,7 @@ export async function POST(request: NextRequest) {
             });
           }
           await tx.execute({
-            sql: "UPDATE document_generations SET status = 'COMPLETED', completed_at = ? WHERE id = ? AND user_email = ?",
+            sql: "UPDATE document_generations SET status = 'GENERATING', updated_at = ? WHERE id = ? AND user_email = ?",
             args: [now, generationId, user.email],
           });
           await tx.commit();
@@ -97,11 +110,11 @@ export async function POST(request: NextRequest) {
         });
         const u = userRow.rows[0] as unknown as { available_credits: number; reserved_credits: number } | undefined;
         return apiSuccess({
-          status: "COMPLETED",
+          status: "GENERATING",
           generationId,
           credits: u?.available_credits ?? 0,
           reservedCredits: u?.reserved_credits ?? 0,
-          message: `Dokumen ${documentType} selesai. Kredit telah dikonfirmasi.`,
+          message: `Dokumen ${documentType} selesai (ringkas).`,
         }, 200, requestId);
       }
 

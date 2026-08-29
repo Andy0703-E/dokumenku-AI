@@ -74,16 +74,28 @@ export function isFlagshipModel(modelId: string): boolean {
   return false;
 }
 
+// ─── Health Overrides (set by admin via /api/admin/model-health) ─────
+const healthOverrides: Record<string, { status: ModelHealthStatus; successRate: string }> = {};
+
+export function setModelHealthOverride(modelId: string, status: ModelHealthStatus, successRate: string): void {
+  healthOverrides[modelId.trim().toLowerCase()] = { status, successRate };
+}
+
+export function getModelHealthOverride(modelId: string): { status: ModelHealthStatus; successRate: string } | null {
+  return healthOverrides[modelId.trim().toLowerCase()] ?? null;
+}
+
 export function classifyModel(id: string, displayName?: string): ModelItem {
   const isFlagship = isFlagshipModel(id);
+  const override = getModelHealthOverride(id);
   return {
     id,
     name: displayName || id,
     tier: isFlagship ? "pro" : "starter",
     badge: isFlagship ? "Flagship (Pro)" : "Starter",
     isFlagship,
-    healthStatus: "healthy",
-    successRate: "100%",
+    healthStatus: override?.status ?? "healthy",
+    successRate: override?.successRate ?? "100%",
   };
 }
 
