@@ -251,6 +251,16 @@ async function ensureSchema(db: Client): Promise<void> {
       name TEXT NOT NULL,
       applied_at TEXT NOT NULL
     )`,
+    `CREATE TABLE IF NOT EXISTS chat_messages (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      user_email TEXT,
+      user_name TEXT NOT NULL,
+      message TEXT NOT NULL,
+      forwarded_to_admin INTEGER NOT NULL DEFAULT 0,
+      admin_reply TEXT,
+      created_at TEXT NOT NULL
+    )`,
+    `CREATE INDEX IF NOT EXISTS idx_chat_messages_created ON chat_messages(created_at)`,
     `CREATE INDEX IF NOT EXISTS idx_users_updated_at ON users(updated_at)`,
     `CREATE INDEX IF NOT EXISTS idx_document_generations_user_status ON document_generations(user_email, status)`,
     `CREATE INDEX IF NOT EXISTS idx_orders_user_status ON orders(user_email, status)`,
