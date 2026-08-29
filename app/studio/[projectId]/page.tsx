@@ -16,7 +16,7 @@ function StudioContent() {
       projectId={projectId}
       initialPrompt={initialPrompt}
       initialProjectName={projectName}
-      onBackToProjects={() => window.location.assign("/studio")}
+      onBackToHome={() => window.location.assign("/")}
     />
   );
 }

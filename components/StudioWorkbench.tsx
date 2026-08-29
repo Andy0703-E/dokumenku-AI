@@ -20,7 +20,6 @@ import {
   Eye,
   MessageSquarePlus,
   Send,
-  ArrowLeft,
 } from "lucide-react";
 import { toast } from "sonner";
 import ReactMarkdown from "react-markdown";
@@ -65,7 +64,6 @@ type StudioWorkbenchProps = {
   initialProjectName?: string;
   projectId?: string;
   onBackToHome?: () => void;
-  onBackToProjects?: () => void;
 };
 
 export default function StudioWorkbench({
@@ -73,7 +71,6 @@ export default function StudioWorkbench({
   initialProjectName = "",
   projectId = "default_project",
   onBackToHome,
-  onBackToProjects,
 }: StudioWorkbenchProps) {
   const [projectPrompt, setProjectPrompt] = useState(initialPrompt);
   const [availableModels, setAvailableModels] = useState<ModelOption[]>([]);
@@ -309,35 +306,6 @@ export default function StudioWorkbench({
       {/* ── Top Navbar ─────────────────────────────────────────── */}
       <header className="studio-top-navbar" aria-label="Studio Navigation">
         <div className="studio-nav-brand-group">
-          <button
-            type="button"
-            onClick={() => window.location.assign("/studio")}
-            style={{
-              display: "inline-flex",
-              alignItems: "center",
-              gap: "4px",
-              padding: "6px 10px",
-              borderRadius: "8px",
-              border: "1px solid var(--border, #E2E8F0)",
-              background: "#fff",
-              cursor: "pointer",
-              fontSize: "0.78rem",
-              fontWeight: 600,
-              color: "var(--text-muted, #64748B)",
-              transition: "all 0.15s ease",
-            }}
-            onMouseEnter={(e) => {
-              e.currentTarget.style.borderColor = "var(--cobalt, #2563EB)";
-              e.currentTarget.style.color = "var(--cobalt, #2563EB)";
-            }}
-            onMouseLeave={(e) => {
-              e.currentTarget.style.borderColor = "var(--border, #E2E8F0)";
-              e.currentTarget.style.color = "var(--text-muted, #64748B)";
-            }}
-          >
-            <ArrowLeft size={14} /> Proyek
-          </button>
-
           <a
             href="/"
             className="studio-brand-link"
