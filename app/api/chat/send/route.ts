@@ -7,9 +7,11 @@ export async function POST(request: NextRequest) {
   const body = await request.json().catch(() => ({}));
   const { name, message } = body as { name?: string; message?: string };
 
-  if (!name || !name.trim()) {
-    return NextResponse.json({ error: "Nama wajib diisi." }, { status: 400 });
+  const user = await getCurrentUser();
+  if (!user) {
+    return NextResponse.json({ error: "Silakan masuk terlebih dahulu untuk chat." }, { status: 401 });
   }
+
   if (!message || !message.trim() || message.trim().length < 3) {
     return NextResponse.json({ error: "Pesan minimal 3 karakter." }, { status: 400 });
   }
@@ -17,9 +19,8 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "Pesan maksimal 2000 karakter." }, { status: 400 });
   }
 
-  const user = await getCurrentUser();
-  const userEmail = user?.email ?? null;
-  const userName = name.trim();
+  const userEmail = user.email;
+  const userName = (name && name.trim()) || user.email.split("@")[0];
   const userMessage = message.trim();
   const now = new Date().toISOString();
 

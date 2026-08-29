@@ -1,34 +1,96 @@
 "use client";
 
-import { useState, useRef, useEffect } from "react";
-import { MessageCircle, X, Send, Loader2, CheckCircle, User } from "lucide-react";
+import { useState, useRef, useEffect, useCallback } from "react";
+import { MessageCircle, X, Send, Loader2, CheckCircle, LogIn } from "lucide-react";
+
+type ChatMessage = {
+  id?: number;
+  role: "user" | "bot" | "admin";
+  text: string;
+};
 
 export default function ChatWidget() {
   const [isOpen, setIsOpen] = useState(false);
-  const [name, setName] = useState("");
+  const [isAuthed, setIsAuthed] = useState<boolean | null>(null);
+  const [userName, setUserName] = useState("");
   const [message, setMessage] = useState("");
   const [isSending, setIsSending] = useState(false);
-  const [sent, setSent] = useState(false);
   const [error, setError] = useState("");
-  const [chatHistory, setChatHistory] = useState<Array<{ role: "user" | "bot"; text: string }>>([
-    { role: "bot", text: "Halo! 👋 Ada yang bisa kami bantu? Kirim pesan dan admin akan segera merespons via WhatsApp." },
-  ]);
+  const [chatHistory, setChatHistory] = useState<ChatMessage[]>([]);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
+  const pollingRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
-  useEffect(() => {
+  const scrollToBottom = useCallback(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [chatHistory]);
+  }, []);
 
   useEffect(() => {
-    if (isOpen) {
+    fetch("/api/account")
+      .then((r) => r.json())
+      .then((p: { authenticated?: boolean; name?: string; email?: string }) => {
+        setIsAuthed(Boolean(p.authenticated));
+        if (p.email) setUserName(p.email.split("@")[0]);
+      })
+      .catch(() => setIsAuthed(false));
+  }, []);
+
+  const loadHistory = useCallback(async () => {
+    if (!isAuthed) return;
+    try {
+      const res = await fetch("/api/chat/history");
+      const payload = (await res.json()) as {
+        ok?: boolean;
+        messages?: Array<{
+          id: number;
+          message: string;
+          adminReply: string | null;
+          createdAt: string;
+        }>;
+      };
+      if (payload.ok && payload.messages) {
+        const history: ChatMessage[] = [];
+        for (const msg of payload.messages) {
+          history.push({ id: msg.id, role: "user", text: msg.message });
+          if (msg.adminReply) {
+            history.push({ role: "admin", text: msg.adminReply });
+          }
+        }
+        setChatHistory(history);
+      }
+    } catch {
+      // ignore
+    }
+  }, [isAuthed]);
+
+  useEffect(() => {
+    if (isOpen && isAuthed) {
+      loadHistory();
+    }
+  }, [isOpen, isAuthed, loadHistory]);
+
+  useEffect(() => {
+    if (isOpen && isAuthed) {
+      pollingRef.current = setInterval(loadHistory, 10000);
+    }
+    return () => {
+      if (pollingRef.current) clearInterval(pollingRef.current);
+    };
+  }, [isOpen, isAuthed, loadHistory]);
+
+  useEffect(() => {
+    scrollToBottom();
+  }, [chatHistory, scrollToBottom]);
+
+  useEffect(() => {
+    if (isOpen && isAuthed) {
       setTimeout(() => inputRef.current?.focus(), 300);
     }
-  }, [isOpen]);
+  }, [isOpen, isAuthed]);
 
   async function handleSend() {
     const trimmedMsg = message.trim();
-    const trimmedName = name.trim();
+    const trimmedName = userName.trim();
     if (!trimmedMsg || trimmedMsg.length < 3) {
       setError("Pesan minimal 3 karakter.");
       return;
@@ -58,14 +120,13 @@ export default function ChatWidget() {
 
       setChatHistory((prev) => [
         ...prev,
-        { role: "bot", text: payload.message || "Pesan terkirim! Admin akan segera merespons via WhatsApp." },
+        { role: "bot", text: payload.message || "Pesan terkirim! Admin akan merespons via WhatsApp." },
       ]);
-      setSent(true);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Gagal mengirim pesan.");
       setChatHistory((prev) => [
         ...prev,
-        { role: "bot", text: "Maaf, terjadi kesalahan. Silakan coba lagi atau hubungi admin via WhatsApp." },
+        { role: "bot", text: "Maaf, terjadi kesalahan. Silakan coba lagi." },
       ]);
     } finally {
       setIsSending(false);
@@ -168,7 +229,9 @@ export default function ChatWidget() {
               </div>
               <div>
                 <strong style={{ fontSize: "0.92rem", display: "block" }}>Dokumenku AI Support</strong>
-                <span style={{ fontSize: "0.72rem", opacity: 0.85 }}>Online • Balasan via WhatsApp</span>
+                <span style={{ fontSize: "0.72rem", opacity: 0.85 }}>
+                  {isAuthed ? "Online • Balasan via WhatsApp" : "Masuk untuk chat"}
+                </span>
               </div>
             </div>
             <button
@@ -192,78 +255,112 @@ export default function ChatWidget() {
             </button>
           </div>
 
-          {/* Messages */}
-          <div
-            style={{
-              flex: 1,
-              overflowY: "auto",
-              padding: "16px",
-              display: "flex",
-              flexDirection: "column",
-              gap: "12px",
-              background: "#F9FAFB",
-            }}
-          >
-            {chatHistory.map((msg, i) => (
+          {/* Content */}
+          {isAuthed === null ? (
+            <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center" }}>
+              <Loader2 size={24} className="animate-spin" style={{ color: "#6B7280" }} />
+            </div>
+          ) : !isAuthed ? (
+            <div style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", padding: "32px", textAlign: "center" }}>
+              <LogIn size={40} style={{ color: "#2563EB", marginBottom: "16px" }} />
+              <h3 style={{ fontSize: "1rem", fontWeight: 700, color: "#1F2937", margin: "0 0 8px" }}>
+                Masuk untuk Chat
+              </h3>
+              <p style={{ fontSize: "0.82rem", color: "#6B7280", margin: "0 0 20px", lineHeight: "1.5" }}>
+                Anda harus masuk terlebih dahulu untuk mengirim pesan ke admin.
+              </p>
+              <a
+                href="/login"
+                className="btn-primary"
+                style={{ padding: "10px 24px", fontSize: "0.85rem", textDecoration: "none", borderRadius: "10px" }}
+              >
+                Masuk Sekarang
+              </a>
+            </div>
+          ) : (
+            <>
+              {/* Messages */}
               <div
-                key={i}
                 style={{
+                  flex: 1,
+                  overflowY: "auto",
+                  padding: "16px",
                   display: "flex",
-                  justifyContent: msg.role === "user" ? "flex-end" : "flex-start",
+                  flexDirection: "column",
+                  gap: "12px",
+                  background: "#F9FAFB",
                 }}
               >
-                <div
-                  style={{
-                    maxWidth: "80%",
-                    padding: "10px 14px",
-                    borderRadius: msg.role === "user" ? "14px 14px 4px 14px" : "14px 14px 14px 4px",
-                    background: msg.role === "user" ? "#2563EB" : "#FFFFFF",
-                    color: msg.role === "user" ? "#fff" : "#1F2937",
-                    fontSize: "0.84rem",
-                    lineHeight: "1.5",
-                    border: msg.role === "user" ? "none" : "1px solid #E5E7EB",
-                    boxShadow: "0 1px 3px rgba(0,0,0,0.06)",
-                  }}
-                >
-                  {msg.text}
-                </div>
-              </div>
-            ))}
-            <div ref={messagesEndRef} />
-          </div>
-
-          {/* Input Area */}
-          <div
-            style={{
-              padding: "12px 16px",
-              borderTop: "1px solid #E5E7EB",
-              background: "#FFFFFF",
-              flexShrink: 0,
-            }}
-          >
-            {!sent ? (
-              <>
-                {/* Name Input */}
-                <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "8px" }}>
-                  <User size={14} style={{ color: "#9CA3AF", flexShrink: 0 }} />
-                  <input
-                    type="text"
-                    value={name}
-                    onChange={(e) => { setName(e.target.value); if (error) setError(""); }}
-                    placeholder="Nama Anda"
+                {chatHistory.length === 0 && (
+                  <div style={{ textAlign: "center", padding: "24px 16px" }}>
+                    <MessageCircle size={32} style={{ color: "#D1D5DB", marginBottom: "8px" }} />
+                    <p style={{ fontSize: "0.82rem", color: "#9CA3AF", margin: 0 }}>
+                      Kirim pesan untuk memulai chat dengan admin.
+                    </p>
+                  </div>
+                )}
+                {chatHistory.map((msg, i) => (
+                  <div
+                    key={msg.id ? `msg-${msg.id}-${msg.role}` : `local-${i}`}
                     style={{
-                      flex: 1,
-                      padding: "8px 10px",
-                      border: "1px solid #D1D5DB",
-                      borderRadius: "8px",
-                      fontSize: "0.82rem",
-                      outline: "none",
-                      background: "#F9FAFB",
+                      display: "flex",
+                      justifyContent: msg.role === "user" ? "flex-end" : "flex-start",
                     }}
-                  />
-                </div>
+                  >
+                    <div
+                      style={{
+                        maxWidth: "80%",
+                        padding: "10px 14px",
+                        borderRadius:
+                          msg.role === "user"
+                            ? "14px 14px 4px 14px"
+                            : msg.role === "admin"
+                              ? "14px 14px 14px 4px"
+                              : "14px 14px 14px 4px",
+                        background:
+                          msg.role === "user"
+                            ? "#2563EB"
+                            : msg.role === "admin"
+                              ? "#ECFDF5"
+                              : "#FFFFFF",
+                        color:
+                          msg.role === "user"
+                            ? "#fff"
+                            : msg.role === "admin"
+                              ? "#065F46"
+                              : "#1F2937",
+                        fontSize: "0.84rem",
+                        lineHeight: "1.5",
+                        border:
+                          msg.role === "user"
+                            ? "none"
+                            : msg.role === "admin"
+                              ? "1px solid #A7F3D0"
+                              : "1px solid #E5E7EB",
+                        boxShadow: "0 1px 3px rgba(0,0,0,0.06)",
+                      }}
+                    >
+                      {msg.role === "admin" && (
+                        <div style={{ fontSize: "0.7rem", fontWeight: 700, color: "#059669", marginBottom: "4px" }}>
+                          💬 Balasan Admin
+                        </div>
+                      )}
+                      {msg.text}
+                    </div>
+                  </div>
+                ))}
+                <div ref={messagesEndRef} />
+              </div>
 
-                {/* Message Input */}
+              {/* Input */}
+              <div
+                style={{
+                  padding: "12px 16px",
+                  borderTop: "1px solid #E5E7EB",
+                  background: "#FFFFFF",
+                  flexShrink: 0,
+                }}
+              >
                 <div style={{ display: "flex", alignItems: "flex-end", gap: "8px" }}>
                   <textarea
                     ref={inputRef}
@@ -312,19 +409,9 @@ export default function ChatWidget() {
                     {error}
                   </div>
                 )}
-              </>
-            ) : (
-              <div style={{ textAlign: "center", padding: "12px 0" }}>
-                <CheckCircle size={32} style={{ color: "#10B981", marginBottom: "8px" }} />
-                <p style={{ fontSize: "0.85rem", color: "#374151", margin: 0, fontWeight: 600 }}>
-                  Pesan Terkirim!
-                </p>
-                <p style={{ fontSize: "0.78rem", color: "#6B7280", margin: "4px 0 0" }}>
-                  Admin akan membalas via WhatsApp Anda.
-                </p>
               </div>
-            )}
-          </div>
+            </>
+          )}
         </div>
       )}
     </>
