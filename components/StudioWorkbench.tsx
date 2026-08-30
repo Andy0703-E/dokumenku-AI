@@ -230,8 +230,8 @@ export default function StudioWorkbench({
       );
       return false;
     }
-    if (trimmed.length > 5000) {
-      setPromptError("Brief proyek melebihi batas maksimal 5.000 karakter.");
+    if (trimmed.length > 10000) {
+      setPromptError("Brief proyek melebihi batas maksimal 10.000 karakter.");
       return false;
     }
     setPromptError("");
@@ -589,7 +589,7 @@ export default function StudioWorkbench({
               }}
             >
               <div className="char-counter-text">
-                {projectPrompt.length.toLocaleString("id-ID")} karakter
+                {projectPrompt.length.toLocaleString("id-ID")} / 10.000 karakter
               </div>
 
               <button
