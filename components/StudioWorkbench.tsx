@@ -313,7 +313,7 @@ export default function StudioWorkbench({
       toast.error("Belum ada dokumen yang siap diunduh.");
       return;
     }
-    downloadAllAsZip(files);
+    downloadAllAsZip(files, initialProjectName);
     toast.success("File ZIP 4 dokumen berhasil diunduh.");
   }
 

@@ -1,7 +1,19 @@
 import JSZip from "jszip";
 import type { GeneratedFiles, FileName } from "./types";
 
-export async function downloadAllAsZip(files: GeneratedFiles) {
+function getZipFileName(projectName?: string): string {
+  const cleanedName = projectName
+    ?.trim()
+    .replace(/[<>:"/\\|?*\u0000-\u001F]/g, "")
+    .replace(/\s+/g, " ")
+    .replace(/[. ]+$/, "")
+    .replace(/\.zip$/i, "")
+    .slice(0, 120);
+
+  return `${cleanedName || "dokumenku-ai-documents"}.zip`;
+}
+
+export async function downloadAllAsZip(files: GeneratedFiles, projectName?: string) {
   const zip = new JSZip();
 
   for (const name of Object.keys(files) as FileName[]) {
@@ -12,7 +24,7 @@ export async function downloadAllAsZip(files: GeneratedFiles) {
   const url = URL.createObjectURL(content);
   const anchor = document.createElement("a");
   anchor.href = url;
-  anchor.download = "dokumenku-ai-documents.zip";
+  anchor.download = getZipFileName(projectName);
   document.body.appendChild(anchor);
   anchor.click();
   anchor.remove();
