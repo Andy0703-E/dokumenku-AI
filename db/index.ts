@@ -233,6 +233,31 @@ async function ensureSchema(db: Client): Promise<void> {
       updated_at TEXT NOT NULL,
       UNIQUE(user_email, project_id, document_type)
     )`,
+    `CREATE TABLE IF NOT EXISTS project_document_revisions (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      revision_id TEXT NOT NULL UNIQUE,
+      user_email TEXT NOT NULL,
+      project_id TEXT NOT NULL,
+      document_type TEXT NOT NULL,
+      file_name TEXT NOT NULL,
+      previous_content TEXT NOT NULL,
+      revised_content TEXT NOT NULL,
+      instruction TEXT NOT NULL,
+      scope TEXT NOT NULL,
+      created_at TEXT NOT NULL
+    )`,
+    `CREATE TABLE IF NOT EXISTS project_blueprints (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      user_email TEXT NOT NULL,
+      project_id TEXT NOT NULL,
+      generation_id TEXT NOT NULL UNIQUE,
+      content TEXT NOT NULL,
+      quality_report TEXT,
+      quality_status TEXT NOT NULL DEFAULT 'PENDING',
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      UNIQUE(user_email, project_id)
+    )`,
     `CREATE TABLE IF NOT EXISTS webhook_events (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       provider TEXT NOT NULL,
@@ -269,6 +294,8 @@ async function ensureSchema(db: Client): Promise<void> {
     `CREATE INDEX IF NOT EXISTS idx_webhook_events_status ON webhook_events(provider, status)`,
     `CREATE INDEX IF NOT EXISTS idx_credit_reservations_user ON credit_reservations(user_email, status)`,
     `CREATE INDEX IF NOT EXISTS idx_project_docs_user_project ON project_documents(user_email, project_id, document_type)`,
+    `CREATE INDEX IF NOT EXISTS idx_project_doc_revisions_project ON project_document_revisions(user_email, project_id, created_at)`,
+    `CREATE INDEX IF NOT EXISTS idx_project_blueprints_user_project ON project_blueprints(user_email, project_id)`,
     `CREATE UNIQUE INDEX IF NOT EXISTS uq_audit_sequence ON audit_logs(sequence)`,
     `CREATE UNIQUE INDEX IF NOT EXISTS uq_credit_payment_order ON credit_transactions(order_id, type) WHERE order_id IS NOT NULL`,
     `CREATE UNIQUE INDEX IF NOT EXISTS uq_webhook_event ON webhook_events(provider, external_event_id)`,
@@ -1313,6 +1340,64 @@ export async function settleGenerationCredits(
   }
 }
 
+// ─── Hidden Canonical Blueprint / Quality Gate ─────────────────────
+
+export async function saveProjectBlueprint(
+  db: Client,
+  {
+    userEmail,
+    projectId,
+    generationId,
+    content,
+    qualityReport,
+    qualityStatus = "PENDING",
+  }: {
+    userEmail: string;
+    projectId: string;
+    generationId: string;
+    content: string;
+    qualityReport?: string;
+    qualityStatus?: "PENDING" | "PASSED" | "FAILED";
+  },
+): Promise<void> {
+  const normEmail = userEmail.trim().toLowerCase();
+  const now = new Date().toISOString();
+
+  await db.execute({
+    sql: `INSERT INTO project_blueprints (user_email, project_id, generation_id, content, quality_report, quality_status, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(user_email, project_id) DO UPDATE SET
+        generation_id = excluded.generation_id,
+        content = excluded.content,
+        quality_report = excluded.quality_report,
+        quality_status = excluded.quality_status,
+        updated_at = excluded.updated_at`,
+    args: [normEmail, projectId, generationId, content, qualityReport || null, qualityStatus, now, now],
+  });
+}
+
+export async function updateProjectBlueprintQuality(
+  db: Client,
+  {
+    userEmail,
+    generationId,
+    qualityReport,
+    qualityStatus,
+  }: {
+    userEmail: string;
+    generationId: string;
+    qualityReport: string;
+    qualityStatus: "PASSED" | "FAILED";
+  },
+): Promise<void> {
+  await db.execute({
+    sql: `UPDATE project_blueprints
+      SET quality_report = ?, quality_status = ?, updated_at = ?
+      WHERE LOWER(user_email) = LOWER(?) AND generation_id = ?`,
+    args: [qualityReport, qualityStatus, new Date().toISOString(), userEmail.trim(), generationId],
+  });
+}
+
 // ─── Project Documents ──────────────────────────────────────────────
 
 export async function saveProjectDocument(
@@ -1344,6 +1429,78 @@ export async function saveProjectDocument(
         updated_at = excluded.updated_at`,
     args: [normEmail, projectId, documentType, fileName, content, now, now],
   });
+}
+
+export async function saveProjectDocumentRevision(
+  db: Client,
+  {
+    userEmail,
+    projectId,
+    instruction,
+    scope,
+    documents,
+  }: {
+    userEmail: string;
+    projectId: string;
+    instruction: string;
+    scope: "document" | "related";
+    documents: Array<{
+      documentType: "PRD" | "TECH_SPEC" | "UI_UX" | "AI_CONTEXT";
+      fileName: string;
+      content: string;
+    }>;
+  },
+): Promise<{ saved: number }> {
+  const normEmail = userEmail.trim().toLowerCase();
+  const now = new Date().toISOString();
+  const tx = await db.transaction("write");
+
+  try {
+    let saved = 0;
+    for (const document of documents) {
+      const currentResult = await tx.execute({
+        sql: `SELECT content FROM project_documents
+          WHERE LOWER(user_email) = LOWER(?) AND project_id = ? AND document_type = ?`,
+        args: [normEmail, projectId, document.documentType],
+      });
+      const current = currentResult.rows[0] as { content?: string } | undefined;
+      if (!current || typeof current.content !== "string") {
+        throw new Error(`PROJECT_DOCUMENT_NOT_FOUND:${document.documentType}`);
+      }
+      if (current.content === document.content) continue;
+
+      await tx.execute({
+        sql: `INSERT INTO project_document_revisions (
+          revision_id, user_email, project_id, document_type, file_name,
+          previous_content, revised_content, instruction, scope, created_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        args: [
+          randomBytes(16).toString("hex"),
+          normEmail,
+          projectId,
+          document.documentType,
+          document.fileName,
+          current.content,
+          document.content,
+          instruction,
+          scope,
+          now,
+        ],
+      });
+      await tx.execute({
+        sql: `UPDATE project_documents
+          SET file_name = ?, content = ?, status = 'COMPLETED', updated_at = ?
+          WHERE LOWER(user_email) = LOWER(?) AND project_id = ? AND document_type = ?`,
+        args: [document.fileName, document.content, now, normEmail, projectId, document.documentType],
+      });
+      saved += 1;
+    }
+    await tx.commit();
+    return { saved };
+  } catch (error) {
+    await tx.rollback();
+    throw error;
+  }
 }
 
 export async function checkProjectDependencies(

@@ -11,5 +11,6 @@ export type ProviderStreamEvent = {
     delta?: { content?: string; text?: string; reasoning_content?: string };
     message?: { content?: string };
     text?: string;
+    finish_reason?: string | null;
   }>;
 };

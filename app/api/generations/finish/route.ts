@@ -1,9 +1,6 @@
 import { NextRequest } from "next/server";
-import { cookies } from "next/headers";
 import {
   getDatabase,
-  executeAtomicDocumentFinalization,
-  settleGenerationCredits,
   releaseCredits,
 } from "@/db";
 import { getCurrentUser } from "@/lib/auth";
@@ -17,26 +14,15 @@ import {
 export async function POST(request: NextRequest) {
   const requestId = generateRequestId();
   const user = await getCurrentUser();
-  const cookieStore = await cookies();
   const {
     generationId,
     completed,
     documentType = "PRD",
-    projectId = "default_project",
-    projectName = "",
-    selectedModel = "",
-    fileName = "document.md",
-    content = "",
     failureReason,
   } = (await request.json().catch(() => ({}))) as unknown as {
     generationId?: string;
     completed?: boolean;
     documentType?: "PRD" | "TECH_SPEC" | "UI_UX" | "AI_CONTEXT" | "ALL_DONE";
-    projectId?: string;
-    projectName?: string;
-    selectedModel?: string;
-    fileName?: string;
-    content?: string;
     failureReason?: string;
   };
 
@@ -48,67 +34,33 @@ export async function POST(request: NextRequest) {
     try {
       const db = await getDatabase();
       const now = new Date().toISOString();
+      const ownedGeneration = await db.execute({
+        sql: "SELECT id FROM document_generations WHERE id = ? AND LOWER(user_email) = LOWER(?)",
+        args: [generationId, user.email],
+      });
+      if (!ownedGeneration.rows[0]) {
+        return apiError(ERROR_CODES.RESOURCE_FORBIDDEN, "Sesi pembuatan dokumen tidak ditemukan atau bukan milik akun Anda.", 403, requestId);
+      }
 
-      // ── ALL_DONE: Settle credits + mark generation completed ─────
+      // Successful finalization is intentionally server-owned by Quality Gate V2.1.
+      // This endpoint only releases a failed reservation; it must not be usable to
+      // capture a credit or publish files directly from a browser request.
       if (documentType === "ALL_DONE") {
-        const settleResult = await settleGenerationCredits(db, {
-          generationId,
-          userEmail: user.email,
-        });
-
-        await db.execute({
-          sql: "UPDATE document_generations SET status = 'COMPLETED', completed_at = ? WHERE id = ? AND user_email = ?",
-          args: [now, generationId, user.email],
-        });
-
-        return apiSuccess({
-          status: "COMPLETED",
-          generationId,
-          credits: settleResult.availableCredits ?? 0,
-          reservedCredits: settleResult.reservedCredits ?? 0,
-          message: "Semua dokumen selesai.",
-        }, 200, requestId);
+        return apiError(
+          ERROR_CODES.GENERATION_INVALID_STATE,
+          "Finalisasi dokumen dilakukan otomatis oleh Blueprint Quality Gate V2.1.",
+          409,
+          requestId,
+        );
       }
 
-      // ── Individual doc: save document only (no credit mutations) ─
-      if (completed && content && content.trim().length > 50) {
-        const finalizationResult = await executeAtomicDocumentFinalization(db, {
-          userEmail: user.email,
-          projectId,
-          projectName,
-          selectedModel,
-          documentType,
-          fileName,
-          content,
-          generationId,
-        });
-
-        if (!finalizationResult.ok) {
-          return apiError(ERROR_CODES.DATABASE_TRANSACTION_FAILED, "Gagal menyimpan dokumen ke database. Kredit Anda tetap aman dalam reservasi dan dapat difinalisasi ulang.", 500, requestId);
-        }
-
-        return apiSuccess({
-          status: "GENERATING",
-          generationId,
-          alreadyProcessed: finalizationResult.alreadyProcessed ?? false,
-          message: `Dokumen ${documentType} berhasil disimpan.`,
-        }, 200, requestId);
-      }
-
-      // ── Completed but short content: settle credits ─────────────
-      if (completed && (!content || content.trim().length <= 50)) {
-        const settleResult = await settleGenerationCredits(db, {
-          generationId,
-          userEmail: user.email,
-        });
-
-        return apiSuccess({
-          status: "GENERATING",
-          generationId,
-          credits: settleResult.availableCredits ?? 0,
-          reservedCredits: settleResult.reservedCredits ?? 0,
-          message: `Dokumen ${documentType} selesai (ringkas).`,
-        }, 200, requestId);
+      if (completed) {
+        return apiError(
+          ERROR_CODES.GENERATION_INVALID_STATE,
+          "Simpan dan penangkapan kredit hanya dapat dilakukan setelah Blueprint Quality Gate V2.1 lulus.",
+          409,
+          requestId,
+        );
       }
 
       // ── Failure: release credits ────────────────────────────────

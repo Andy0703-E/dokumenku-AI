@@ -7,13 +7,12 @@ export function getProviderError(
   modelId?: string,
 ): string {
   const normalizedMessage = message?.toLowerCase() ?? "";
-  const modelLabel = modelId ? ` '${modelId}'` : "";
 
   if (
     normalizedMessage.includes("maintenance") ||
     normalizedMessage.includes("pemeliharaan")
   ) {
-    return "Provider AI sedang dalam maintenance. Pembuatan dokumen sementara tidak tersedia; silakan coba kembali setelah pemeliharaan selesai. Kredit Anda tetap aman.";
+    return "Provider AI sedang dalam maintenance. Pembuatan dokumen sementara tidak tersedia; silakan coba kembali beberapa saat lagi. Kredit Anda tetap aman.";
   }
   if (status === 401 || normalizedMessage.includes("invalid api key")) {
     return "Layanan belum dikonfigurasi oleh admin atau API key tidak valid.";
@@ -24,7 +23,7 @@ export function getProviderError(
     normalizedMessage.includes("balance") ||
     normalizedMessage.includes("saldo")
   ) {
-    return `Saldo atau kuota layanan AI tidak mencukupi di server upstream. Silakan hubungi admin.`;
+    return "Saldo atau kuota layanan AI tidak mencukupi di server upstream. Silakan hubungi admin. Kredit Anda tetap aman.";
   }
   if (
     status === 404 ||
@@ -32,10 +31,10 @@ export function getProviderError(
     normalizedMessage.includes("does not exist") ||
     normalizedMessage.includes("not found")
   ) {
-    return `Model AI${modelLabel} tidak ditemukan atau sedang dinonaktifkan di server upstream. Silakan pilih model lain dari daftar.`;
+    return "Model AI yang tersedia sedang tidak dapat digunakan. Silakan coba kembali beberapa saat lagi. Kredit Anda tetap aman.";
   }
   if (status === 403 || normalizedMessage.includes("permission_denied") || normalizedMessage.includes("access_denied")) {
-    return `Model AI${modelLabel} tidak dapat diakses atau dibatasi oleh provider upstream. Silakan coba model alternatif.`;
+    return "Model AI tidak dapat diakses di server upstream. Silakan coba kembali beberapa saat lagi. Kredit Anda tetap aman.";
   }
   if (
     status === 429 ||
@@ -43,7 +42,7 @@ export function getProviderError(
     normalizedMessage.includes("too many requests") ||
     normalizedMessage.includes("quota exceeded")
   ) {
-    return `Model AI${modelLabel} sedang mencapai batas frekuensi (rate limit) di server AI. Silakan ganti ke model lain atau tunggu sebentar.`;
+    return "Server AI sedang mencapai batas frekuensi (rate limit). Silakan tunggu beberapa saat lalu coba lagi. Kredit Anda tetap aman.";
   }
   if (
     status >= 500 ||
@@ -52,9 +51,9 @@ export function getProviderError(
     normalizedMessage.includes("bad gateway") ||
     normalizedMessage.includes("service unavailable")
   ) {
-    return `Model AI${modelLabel} sedang mengalami gangguan atau kelebihan beban di server upstream. Silakan pilih model alternatif (kredit Anda aman).`;
+    return "Server upstream sedang mengalami gangguan atau kelebihan beban. Silakan coba kembali beberapa saat lagi. Kredit Anda tetap aman.";
   }
-  return message || `Model AI${modelLabel} tidak dapat memproses permintaan saat ini. Silakan coba model lain.`;
+  return message || "Server AI tidak dapat memproses permintaan saat ini. Silakan coba kembali. Kredit Anda tetap aman.";
 }
 
 export function getPayloadError(payload: unknown): string | undefined {
@@ -91,26 +90,34 @@ function getStreamDelta(event: ProviderStreamEvent, providerName: string) {
       getTextContent(event.response) ||
       getTextContent(event.content),
     reasoning: getTextContent(choice?.delta?.reasoning_content),
+    finishReason: choice?.finish_reason ?? null,
   };
 }
+
+export type StreamConsumeResult = {
+  finishReason: string | null;
+};
 
 export async function consumeProviderStream(
   response: Response,
   _providerKind: string,
   providerName: string,
   onUpdate: (update: { content: string; reasoning: string }) => void,
-): Promise<void> {
+): Promise<StreamConsumeResult> {
   if (!response.body) throw new Error(`${providerName} tidak mengembalikan aliran respons.`);
 
   const reader = response.body.getReader();
   const decoder = new TextDecoder();
   let buffer = "";
+  let lastFinishReason: string | null = null;
 
   const consumeData = (rawData: string) => {
     const data = rawData.trim();
     if (!data || data === "[DONE]") return;
     try {
-      onUpdate(getStreamDelta(JSON.parse(data) as ProviderStreamEvent, providerName));
+      const delta = getStreamDelta(JSON.parse(data) as ProviderStreamEvent, providerName);
+      if (delta.finishReason) lastFinishReason = delta.finishReason;
+      onUpdate(delta);
     } catch (error) {
       if (error instanceof SyntaxError) {
         throw new Error(`${providerName} mengirim format stream yang tidak valid.`);
@@ -132,6 +139,8 @@ export async function consumeProviderStream(
 
   buffer += decoder.decode();
   if (buffer.trim().startsWith("data:")) consumeData(buffer.trim().slice(5));
+
+  return { finishReason: lastFinishReason };
 }
 
 export async function requestDocumentStream(
@@ -140,10 +149,11 @@ export async function requestDocumentStream(
   userContent: string,
   systemPrompt: string,
   maxOutputTokens: number,
+  stage?: string,
 ): Promise<Response> {
   return fetch("/api/generate", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ generationId, selectedModel, userContent, systemPrompt, maxOutputTokens }),
+    body: JSON.stringify({ generationId, selectedModel, userContent, systemPrompt, maxOutputTokens, stage }),
   });
 }

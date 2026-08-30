@@ -6,7 +6,7 @@ import {
   checkProjectDependencies,
 } from "@/db";
 import { getCurrentUser } from "@/lib/auth";
-import { isFlagshipModel } from "@/lib/models-config";
+import { isFlagshipModel, isAutoModel } from "@/lib/models-config";
 import {
   ERROR_CODES,
   apiError,
@@ -41,7 +41,8 @@ export async function POST(request: NextRequest) {
   }
 
   const modelId = selectedModel.trim();
-  const isFlagship = isFlagshipModel(modelId);
+  const isAuto = isAutoModel(modelId);
+  const isFlagship = !isAuto && isFlagshipModel(modelId);
   const cookieStore = await cookies();
   const now = new Date().toISOString();
   const generationId = "gen_" + crypto.randomUUID();
@@ -63,6 +64,8 @@ export async function POST(request: NextRequest) {
         return apiError(ERROR_CODES.AI_DEPENDENCY_MISSING, `Dokumen ${depCheck.missingDependency} dibutuhkan sebagai sumber konteks sebelum membuat ${documentType}.`, 400, requestId);
       }
 
+      // Flagship model restriction: only enforce for non-auto explicit model selection.
+      // Auto mode handles tier-appropriate selection internally.
       if (isFlagship && user.role !== "admin") {
         const purchasedResult = await db.execute({
           sql: "SELECT 1 FROM credit_transactions WHERE user_email = ? AND amount > 3 AND reason != 'Kredit awal akun baru' LIMIT 1",

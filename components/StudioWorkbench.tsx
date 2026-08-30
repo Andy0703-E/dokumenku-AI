@@ -1,14 +1,12 @@
 "use client";
 
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect } from "react";
 import {
   Layers,
   Tag,
   User,
   Shield,
   Coins,
-  Cpu,
-  ChevronDown,
   Pencil,
   FileText,
   Clock,
@@ -20,6 +18,7 @@ import {
   Eye,
   MessageSquarePlus,
   Send,
+  Zap,
 } from "lucide-react";
 import { toast } from "sonner";
 import ReactMarkdown from "react-markdown";
@@ -28,37 +27,63 @@ import remarkGfm from "remark-gfm";
 import { useDocumentGenerator } from "@/hooks/useDocumentGenerator";
 import { downloadMarkdown, FILES } from "@/lib/stream-parser";
 import { downloadAllAsZip } from "@/lib/export";
+import {
+  analyzeRevisionImpact,
+  createLineDiff,
+  type RevisionImpact,
+  type RevisionPreview,
+  type RevisionScope,
+} from "@/lib/revision-impact";
 import type { FileName } from "@/lib/types";
-
-type ModelOption = {
-  id: string;
-  name: string;
-  tier?: "starter" | "pro";
-  badge?: string;
-  isFlagship?: boolean;
-  healthStatus?: "healthy" | "degraded" | "maintenance" | "unknown";
-  availabilityLabel?: string;
-  statusSource?: "provider" | "admin";
-  providerGrade?: string;
-  supportsVision?: boolean;
-};
 
 const QUICK_PROMPTS = [
   {
     title: "QR Absensi Siswa",
-    text: "Website manajemen absensi QR untuk sekolah. Admin mengelola kelas, data siswa, dan sesi absensi; siswa melakukan scan barcode presensi dan melihat riwayat kehadiran. Gunakan Next.js, TypeScript, Tailwind, dan PostgreSQL dengan arsitektur role-based access.",
+    text: `Nama / jenis produk: Sistem absensi siswa berbasis QR untuk sekolah
+Target pengguna utama: Admin sekolah, guru, dan siswa
+Masalah yang ingin diselesaikan dan tujuan bisnis: Mempercepat pencatatan kehadiran dan memberi riwayat presensi yang akurat
+Fitur utama beserta prioritasnya: Kelola kelas/siswa, sesi absensi QR, scan presensi, riwayat siswa, dan laporan guru
+Role pengguna dan alur utama yang diharapkan: Admin menyiapkan data; guru membuka sesi; siswa scan QR; guru meninjau hasil
+Halaman / pengalaman pengguna yang diperlukan: Dashboard admin, daftar kelas, sesi QR, pemindai siswa, dan riwayat kehadiran
+Data penting, integrasi, dan teknologi yang diinginkan: Siswa, kelas, sesi, presensi; Next.js, TypeScript, Tailwind, PostgreSQL
+Aturan bisnis, keamanan, atau batasan khusus: Satu siswa hanya dapat tercatat sekali per sesi dan akses berbasis role
+Preferensi desain, bahasa, atau contoh referensi: Antarmuka web sederhana, cepat dipakai di kelas, Bahasa Indonesia`,
   },
   {
     title: "POS Kasir & Stok",
-    text: "Sistem Point of Sale (POS) cloud untuk coffee shop dan restoran. Kasir cepat dengan cetak struk Bluetooth & WhatsApp, manajemen meja, stok bahan baku berkurang otomatis, laporan laba harian, dan dashboard owner multi-cabang.",
+    text: `Nama / jenis produk: POS cloud untuk coffee shop dan restoran
+Target pengguna utama: Kasir, owner, manajer cabang, dan staf dapur
+Masalah yang ingin diselesaikan dan tujuan bisnis: Mempercepat transaksi dan mengontrol stok serta laba per cabang
+Fitur utama beserta prioritasnya: Transaksi kasir, cetak struk, meja, stok bahan baku, laporan harian, dan multi-cabang
+Role pengguna dan alur utama yang diharapkan: Kasir membuat pesanan; dapur menerima pesanan; owner melihat laporan dan stok
+Halaman / pengalaman pengguna yang diperlukan: POS kasir, daftar pesanan, denah meja, stok, dashboard owner, dan laporan
+Data penting, integrasi, dan teknologi yang diinginkan: Produk, transaksi, stok, cabang; printer Bluetooth dan WhatsApp
+Aturan bisnis, keamanan, atau batasan khusus: Stok berkurang otomatis saat transaksi selesai; pembatalan harus tercatat audit
+Preferensi desain, bahasa, atau contoh referensi: Tampilan kasir cepat dengan tombol besar dan dashboard ringkas`,
   },
   {
     title: "SaaS AI Document Chat",
-    text: "Platform SaaS AI untuk analisis dokumen PDF & ekstraksi data cerdas. Pengguna upload PDF, melakukan tanya jawab berbasis RAG dengan sumber kutipan, dan ekspor ringkasan ke Excel/Word.",
+    text: `Nama / jenis produk: Platform SaaS AI untuk analisis dan tanya jawab dokumen PDF
+Target pengguna utama: Profesional, tim operasional, dan peneliti
+Masalah yang ingin diselesaikan dan tujuan bisnis: Mempercepat pencarian insight dari dokumen panjang dengan jawaban yang memiliki sumber kutipan
+Fitur utama beserta prioritasnya: Upload PDF, ekstraksi teks, chat RAG, kutipan sumber, ringkasan, dan ekspor Excel/Word
+Role pengguna dan alur utama yang diharapkan: Pengguna upload dokumen, menunggu indeks, bertanya, memeriksa kutipan, lalu ekspor hasil
+Halaman / pengalaman pengguna yang diperlukan: Dashboard dokumen, upload, ruang chat, detail kutipan, dan riwayat ekspor
+Data penting, integrasi, dan teknologi yang diinginkan: File PDF, chunk, embedding, percakapan; penyimpanan objek dan layanan AI/RAG
+Aturan bisnis, keamanan, atau batasan khusus: Dokumen privat per pengguna; jawaban wajib menunjukkan sumber kutipan
+Preferensi desain, bahasa, atau contoh referensi: SaaS profesional, desktop-first, Bahasa Indonesia dan Inggris`,
   },
   {
     title: "Marketplace Jasa Lokal",
-    text: "Platform marketplace jasa freelance lokal dengan escrow payment, milestone tracking, real-time chat, review rating, dan sistem verifikasi identitas freelancer.",
+    text: `Nama / jenis produk: Marketplace jasa freelance lokal
+Target pengguna utama: Klien, freelancer, admin platform, dan tim verifikasi
+Masalah yang ingin diselesaikan dan tujuan bisnis: Mempertemukan pencari jasa lokal dengan freelancer terpercaya dan transaksi yang aman
+Fitur utama beserta prioritasnya: Profil jasa, pencarian, penawaran, escrow, milestone, chat, review, dan verifikasi identitas
+Role pengguna dan alur utama yang diharapkan: Klien membuat proyek; freelancer mengirim penawaran; keduanya menyetujui milestone dan pembayaran
+Halaman / pengalaman pengguna yang diperlukan: Beranda pencarian, detail jasa, proyek, penawaran, chat, pembayaran, dan dashboard admin
+Data penting, integrasi, dan teknologi yang diinginkan: Akun, jasa, proyek, milestone, transaksi; payment gateway dan notifikasi
+Aturan bisnis, keamanan, atau batasan khusus: Dana escrow hanya dilepas setelah milestone disetujui; verifikasi identitas wajib untuk freelancer
+Preferensi desain, bahasa, atau contoh referensi: Mobile-friendly, terpercaya, fokus pada layanan lokal`,
   },
 ];
 
@@ -71,6 +96,35 @@ Halaman / pengalaman pengguna yang diperlukan:
 Data penting, integrasi, dan teknologi yang diinginkan:
 Aturan bisnis, keamanan, atau batasan khusus:
 Preferensi desain, bahasa, atau contoh referensi:`;
+
+const REVISION_QUICK_PROMPTS: Record<FileName, Array<{ label: string; instruction: string }>> = {
+  "PRD.md": [
+    { label: "Tambah Fitur", instruction: "Tambahkan fitur baru beserta user story, prioritas, dan kriteria penerimaannya." },
+    { label: "Tambah Role", instruction: "Tambahkan role baru, kebutuhan pengguna, dan batas permission yang jelas." },
+    { label: "Ubah MVP", instruction: "Perbarui scope MVP, V1, dan Future agar prioritas rilis lebih realistis." },
+    { label: "Acceptance Criteria", instruction: "Perjelas kriteria penerimaan untuk setiap alur utama dan kondisi gagal." },
+  ],
+  "TECH-STACK.md": [
+    { label: "Security", instruction: "Perkuat desain keamanan, autentikasi, otorisasi, audit, dan perlindungan data sensitif." },
+    { label: "API Architecture", instruction: "Perjelas arsitektur API, versioning endpoint, kontrak request/response, dan error response." },
+    { label: "Deployment", instruction: "Tambahkan strategi deployment, environment, CI/CD, rollback, dan observabilitas." },
+    { label: "Error Handling", instruction: "Perjelas edge case, penanganan galat, retry, idempotency, dan timeout." },
+  ],
+  "UI-UX.md": [
+    { label: "Halaman Baru", instruction: "Tambahkan halaman baru lengkap dengan tujuan, struktur, state, dan interaksinya." },
+    { label: "Responsive Mobile", instruction: "Perkuat perilaku responsif mobile, prioritas konten, dan interaksi layar kecil." },
+    { label: "User Flow", instruction: "Perjelas user flow utama, kondisi kosong, loading, sukses, dan galat." },
+    { label: "Design System", instruction: "Lengkapi design token, komponen, variasi state, dan aturan aksesibilitas." },
+  ],
+  "SCHEMA.md": [
+    { label: "Tambah Entitas", instruction: "Tambahkan entitas baru beserta kolom, relasi, constraint, index, dan lifecycle yang diperlukan." },
+    { label: "Role & Permission", instruction: "Perjelas role, permission data, row-level access, dan audit atas perubahan penting." },
+    { label: "Audit Log", instruction: "Tambahkan audit log yang mencatat aktor, aksi, perubahan data, waktu, dan konteksnya." },
+    { label: "Index & Constraint", instruction: "Tambahkan index dan constraint untuk integritas data, uniqueness, foreign key, dan query utama." },
+    { label: "Soft Delete", instruction: "Tambahkan strategi soft delete, retensi, pemulihan, dan filter data aktif." },
+    { label: "Riwayat Perubahan", instruction: "Tambahkan riwayat perubahan untuk data penting beserta actor dan alasan perubahan." },
+  ],
+};
 
 type StudioWorkbenchProps = {
   initialPrompt?: string;
@@ -86,14 +140,10 @@ export default function StudioWorkbench({
   onBackToHome,
 }: StudioWorkbenchProps) {
   const [projectPrompt, setProjectPrompt] = useState(initialPrompt);
-  const [availableModels, setAvailableModels] = useState<ModelOption[]>([]);
-  const [selectedModel, setSelectedModel] = useState("");
-  const [isLoadingModels, setIsLoadingModels] = useState(true);
   const [isProviderActive, setIsProviderActive] = useState(false);
   const [isProviderMaintenance, setIsProviderMaintenance] = useState(false);
   const [providerErrorMsg, setProviderErrorMsg] = useState("");
   const [creditStatus, setCreditStatus] = useState("Memeriksa status kredit...");
-  const [isUserPro, setIsUserPro] = useState(false);
 
   const [creditsRemaining, setCreditsRemaining] = useState<number>(3);
   const [isAuthenticated, setIsAuthenticated] = useState<boolean>(false);
@@ -106,6 +156,9 @@ export default function StudioWorkbench({
   const [showRevisionModal, setShowRevisionModal] = useState(false);
   const [revisionInstruction, setRevisionInstruction] = useState("");
   const [isSubmittingRevision, setIsSubmittingRevision] = useState(false);
+  const [revisionScope, setRevisionScope] = useState<RevisionScope>("document");
+  const [revisionImpact, setRevisionImpact] = useState<RevisionImpact | null>(null);
+  const [revisionPreview, setRevisionPreview] = useState<RevisionPreview | null>(null);
 
   const {
     files,
@@ -114,10 +167,13 @@ export default function StudioWorkbench({
     progress,
     activeFile,
     hasResult,
+    qualityState,
+    qualityReport,
     lastError,
     setActiveFile,
     updateFileContent,
-    reviseDocument,
+    prepareRevision,
+    applyRevisionPreview,
     generateFromPrompt,
     resetAll,
   } = useDocumentGenerator(projectId, initialProjectName);
@@ -128,41 +184,22 @@ export default function StudioWorkbench({
     }
   }, [initialPrompt]);
 
-  async function loadModels() {
-    setIsLoadingModels(true);
+  async function checkProviderHealth() {
     try {
       const response = await fetch("/api/models");
       const payload = (await response.json()) as {
-        data?: ModelOption[];
+        data?: unknown[];
         isPro?: boolean;
         error?: string;
         providerStatus?: "maintenance";
       };
       if (response.ok && payload.data && payload.data.length > 0) {
-        const userPro = Boolean(payload.isPro);
-        setIsUserPro(userPro);
-        const models = payload.data.filter((m) => Boolean(m.id));
-        setAvailableModels(models);
-
-        // Auto-select a model that the provider currently marks as enabled.
-        let defaultModel = "";
-        if (userPro) {
-          const healthyFlagship = models.find((m) => m.isFlagship && m.healthStatus === "healthy");
-          defaultModel = healthyFlagship?.id || models.find((m) => m.isFlagship)?.id || models[0]?.id;
-        } else {
-          const healthyStarter = models.find((m) => !m.isFlagship && m.healthStatus === "healthy");
-          defaultModel = healthyStarter?.id || models.find((m) => !m.isFlagship)?.id || models[0]?.id;
-        }
-
-        setSelectedModel(defaultModel ?? "");
         setIsProviderActive(true);
         setIsProviderMaintenance(false);
         setProviderErrorMsg("");
       } else {
         setIsProviderActive(false);
         setIsProviderMaintenance(payload.providerStatus === "maintenance");
-        setAvailableModels([]);
-        setSelectedModel("");
         setProviderErrorMsg(
           payload.error ||
             "Layanan belum aktif. Admin perlu menyelesaikan konfigurasi provider terlebih dahulu.",
@@ -171,13 +208,9 @@ export default function StudioWorkbench({
     } catch {
       setIsProviderActive(false);
       setIsProviderMaintenance(false);
-      setAvailableModels([]);
-      setSelectedModel("");
       setProviderErrorMsg(
         "Layanan belum aktif. Admin perlu menyelesaikan konfigurasi provider terlebih dahulu.",
       );
-    } finally {
-      setIsLoadingModels(false);
     }
   }
 
@@ -196,10 +229,8 @@ export default function StudioWorkbench({
       if (payload.authenticated) {
         if (payload.role === "admin") {
           setCreditStatus(`Admin: ${credits} kredit`);
-          setIsUserPro(true);
         } else if (payload.isPro) {
           setCreditStatus(`Pro: ${credits} kredit`);
-          setIsUserPro(true);
         } else {
           setCreditStatus(`Saldo: ${credits} kredit`);
         }
@@ -214,7 +245,7 @@ export default function StudioWorkbench({
   }
 
   useEffect(() => {
-    void loadModels();
+    void checkProviderHealth();
     void loadAccount();
   }, []);
 
@@ -255,26 +286,13 @@ export default function StudioWorkbench({
       return;
     }
 
-    if (!isProviderActive || !selectedModel) {
-      toast.error("Layanan provider AI belum aktif atau model belum dipilih.");
-      return;
-    }
-
-    const targetModel = availableModels.find((m) => m.id === selectedModel);
-    if (availableModels.length > 0 && !targetModel) {
-      toast.error(`Model AI '${selectedModel}' tidak ditemukan atau sedang dinonaktifkan di provider. Silakan pilih model lain.`);
-      return;
-    }
-
-    if (targetModel?.isFlagship && !isUserPro) {
-      toast.warning(
-        `Model Flagship '${targetModel.name}' eksklusif untuk akun Pro Studio. Silakan gunakan model Starter atau beli paket Pro Studio.`,
-      );
+    if (!isProviderActive) {
+      toast.error("Layanan provider AI belum aktif.");
       return;
     }
 
     // Optimistically update account credits before and after generation
-    void generateFromPrompt(projectPrompt, selectedModel).then((success) => {
+    void generateFromPrompt(projectPrompt).then((success) => {
       void loadAccount();
       if (!success && creditsRemaining <= 0) {
         setShowOutOfCreditsModal(true);
@@ -291,6 +309,10 @@ export default function StudioWorkbench({
       toast.error("Belum ada teks untuk disalin.");
       return;
     }
+    if (!hasResult) {
+      toast.error("Dokumen akan dapat disalin setelah Blueprint Quality Gate V2.1 lulus.");
+      return;
+    }
     await navigator.clipboard.writeText(text);
     toast.success(`${activeFile} berhasil disalin ke clipboard`);
   }
@@ -301,20 +323,70 @@ export default function StudioWorkbench({
       toast.error("Belum ada dokumen untuk diunduh.");
       return;
     }
+    if (!hasResult) {
+      toast.error("Dokumen akan dapat diunduh setelah Blueprint Quality Gate V2.1 lulus.");
+      return;
+    }
     downloadMarkdown(activeFile, text);
     toast.success(`${activeFile} berhasil diunduh`);
   }
 
   function handleDownloadZip() {
-    const hasAnyContent = FILES.some(
-      ({ name }) => files[name]?.trim().length > 0,
-    );
-    if (!hasAnyContent) {
-      toast.error("Belum ada dokumen yang siap diunduh.");
+    if (!hasResult) {
+      toast.error("ZIP tersedia setelah Blueprint Quality Gate V2.1 lulus.");
       return;
     }
     downloadAllAsZip(files, initialProjectName);
     toast.success("File ZIP 4 dokumen berhasil diunduh.");
+  }
+
+  function openRevisionModal() {
+    setRevisionError("");
+    setRevisionImpact(null);
+    setRevisionScope("document");
+    setShowRevisionModal(true);
+  }
+
+  async function requestRevisionPreview(scope: RevisionScope, skipImpactConfirmation = false) {
+    const instruction = revisionInstruction.trim();
+    if (!instruction) {
+      setRevisionError("Tuliskan instruksi atau komentar revisi terlebih dahulu.");
+      return;
+    }
+    if (instruction.length < 5) {
+      setRevisionError("Instruksi revisi minimal 5 karakter.");
+      return;
+    }
+
+    const impact = analyzeRevisionImpact(activeFile, instruction);
+    if (scope === "document" && impact.affectedFiles.length && !skipImpactConfirmation) {
+      setRevisionImpact(impact);
+      return;
+    }
+
+    setRevisionError("");
+    setRevisionImpact(null);
+    setRevisionScope(scope);
+    setIsSubmittingRevision(true);
+    const preview = await prepareRevision(activeFile, instruction, scope);
+    setIsSubmittingRevision(false);
+    if (preview) {
+      setRevisionPreview(preview);
+      setShowRevisionModal(false);
+    }
+  }
+
+  async function applyPreparedRevision() {
+    if (!revisionPreview) return;
+    setIsSubmittingRevision(true);
+    const applied = await applyRevisionPreview(revisionPreview);
+    setIsSubmittingRevision(false);
+    if (applied) {
+      setRevisionPreview(null);
+      setRevisionInstruction("");
+      setRevisionImpact(null);
+      setRevisionScope("document");
+    }
   }
 
   const activeContent = files[activeFile] || "";
@@ -403,95 +475,93 @@ export default function StudioWorkbench({
           </div>
 
           <form onSubmit={handleSubmit} className="studio-brief-card">
-            {/* Model Selector Section */}
+            {/* Model Selector Section - Auto Only */}
             <div
               style={{ display: "flex", flexDirection: "column", gap: "6px" }}
             >
               <div className="brief-model-header">
-                <span>ENGINE MODEL AI</span>
+                <span>MESIN AI</span>
                 <span className="credit-file-pill">1 Kredit = 4 File</span>
               </div>
 
-              <div className="model-dropdown-wrap">
-                <Cpu size={16} className="model-chip-icon" />
-                <select
-                  value={selectedModel}
-                  onChange={(e) => {
-                    const val = e.target.value;
-                    const m = availableModels.find((item) => item.id === val);
-                    if (m?.isFlagship && !isUserPro) {
-                      toast.warning(
-                        "Model Flagship eksklusif untuk akun Pro Studio. Silakan pilih model Starter atau upgrade paket.",
-                      );
-                      return;
-                    }
-                    if (m?.healthStatus === "maintenance") {
-                      toast.warning(
-                        `Model '${m.name}' sedang dalam maintenance di provider. Silakan pilih model yang aktif atau coba kembali setelah pemeliharaan selesai.`,
-                      );
-                    } else if (m?.healthStatus === "degraded" || m?.healthStatus === "unknown") {
-                      toast.warning(
-                        `Provider melaporkan model '${m.name}' ${m.availabilityLabel?.toLowerCase() || "belum tersedia"}. Pilih model lain yang aktif.`,
-                      );
-                    }
-                    setSelectedModel(val);
+              <div
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: "10px",
+                  padding: "10px 14px",
+                  borderRadius: "12px",
+                  background: isProviderActive
+                    ? "linear-gradient(135deg, #EEF2FF 0%, #F0FDF4 100%)"
+                    : "#FFF7ED",
+                  border: isProviderActive
+                    ? "1.5px solid #C7D2FE"
+                    : "1.5px solid #FDE68A",
+                  minHeight: "42px",
+                }}
+              >
+                <div
+                  style={{
+                    width: "32px",
+                    height: "32px",
+                    borderRadius: "8px",
+                    background: isProviderActive ? "var(--cobalt)" : "#F59E0B",
+                    display: "grid",
+                    placeItems: "center",
+                    color: "#FFFFFF",
+                    flexShrink: 0,
                   }}
-                  disabled={!isProviderActive || availableModels.length === 0}
-                  aria-label="Pilih model AI"
                 >
-                  {isProviderActive && availableModels.length > 0 ? (
-                    <>
-                      <optgroup label="🟢 Model Aktif di Provider">
-                        {availableModels
-                          .filter((m) => m.healthStatus === "healthy")
-                          .map((m) => (
-                            <option
-                              key={m.id}
-                              value={m.id}
-                              disabled={m.isFlagship && !isUserPro}
-                            >
-                              🟢 {m.name} {m.isFlagship ? (isUserPro ? "(Pro Flagship • Aktif)" : "(🔒 Butuh Pro)") : "(Starter • Aktif)"}
-                            </option>
-                          ))}
-                      </optgroup>
-                      <optgroup label="⚠️ Model Tidak Tersedia / Belum Terverifikasi">
-                        {availableModels
-                          .filter((m) => m.healthStatus !== "healthy")
-                          .map((m) => (
-                            <option
-                              key={m.id}
-                              value={m.id}
-                              disabled={true}
-                            >
-                              ⚠️ {m.name} ({m.availabilityLabel || (m.healthStatus === "maintenance" ? "Maintenance provider" : "Tidak tersedia di provider")})
-                            </option>
-                          ))}
-                      </optgroup>
-                    </>
+                  {isProviderActive ? (
+                    <Zap size={16} strokeWidth={2.5} />
                   ) : (
-                    <option value="">Layanan belum aktif</option>
+                    <AlertTriangle size={16} strokeWidth={2.5} />
                   )}
-                </select>
-                <ChevronDown size={16} className="chevron-icon" />
+                </div>
+                <div style={{ display: "flex", flexDirection: "column", gap: "1px", minWidth: 0 }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
+                    <strong
+                      style={{
+                        fontSize: "0.88rem",
+                        color: "var(--navy)",
+                        fontWeight: 800,
+                      }}
+                    >
+                      AUTO
+                    </strong>
+                    {isProviderActive && (
+                      <span
+                        style={{
+                          fontSize: "0.65rem",
+                          fontWeight: 700,
+                          padding: "1px 6px",
+                          borderRadius: "6px",
+                          background: "#DCFCE7",
+                          color: "#166534",
+                          border: "1px solid #BBF7D0",
+                        }}
+                      >
+                        Direkomendasikan
+                      </span>
+                    )}
+                  </div>
+                  <span
+                    style={{
+                      fontSize: "0.73rem",
+                      color: "var(--text-muted)",
+                      lineHeight: "1.3",
+                    }}
+                  >
+                    {isProviderActive
+                      ? "Sistem otomatis memilih model terbaik untuk setiap tahap dokumen."
+                      : isProviderMaintenance
+                        ? "Provider dalam maintenance."
+                        : "Menunggu koneksi provider AI..."}
+                  </span>
+                </div>
               </div>
 
-              {isProviderActive ? (
-                availableModels.find((m) => m.id === selectedModel)?.healthStatus === "maintenance" ? (
-                  <div className="provider-alert-amber" style={{ marginTop: "4px" }} role="alert">
-                    <AlertTriangle size={15} style={{ flexShrink: 0, marginTop: "1px" }} />
-                    <span>
-                      Model ini sedang dalam <strong>maintenance provider</strong>. Pembuatan dokumen sementara tidak tersedia; silakan pilih model aktif atau coba kembali setelah pemeliharaan selesai.
-                    </span>
-                  </div>
-                ) : ["degraded", "unknown"].includes(availableModels.find((m) => m.id === selectedModel)?.healthStatus || "") ? (
-                  <div className="provider-alert-amber" style={{ marginTop: "4px" }} role="alert">
-                    <AlertTriangle size={15} style={{ flexShrink: 0, marginTop: "1px" }} />
-                    <span>
-                      Provider melaporkan model ini <strong>{availableModels.find((m) => m.id === selectedModel)?.availabilityLabel?.toLowerCase() || "belum tersedia"}</strong>. Silakan pilih model lain yang aktif.
-                    </span>
-                  </div>
-                ) : null
-              ) : (
+              {!isProviderActive && (
                 <div className="provider-alert-amber" role="alert">
                   <AlertTriangle
                     size={16}
@@ -543,7 +613,7 @@ export default function StudioWorkbench({
             <div className="quick-prompts-section">
               <div className="quick-prompts-label">
                  <Pencil size={14} color="var(--amber)" />
-                <span>Contoh Prompt Cepat:</span>
+                <span>Contoh Brief Cepat (format lengkap):</span>
               </div>
               <div className="quick-prompts-grid">
                 {QUICK_PROMPTS.map((qp) => (
@@ -608,7 +678,9 @@ export default function StudioWorkbench({
                 {isGenerating ? (
                   <>
                     <Loader2 className="animate-spin" size={18} />
-                    Menyusun Dokumen ({progress}%)...
+                    {qualityState === "building" && progress <= 10
+                      ? `Menyiapkan Blueprint (${progress}%)...`
+                      : `Menyusun Dokumen (${progress}%)...`}
                   </>
                 ) : creditsRemaining <= 0 ? (
                   <>
@@ -649,10 +721,7 @@ export default function StudioWorkbench({
               type="button"
               className="btn-secondary studio-zip-btn"
               onClick={handleDownloadZip}
-              disabled={
-                !hasResult &&
-                !FILES.some(({ name }) => files[name]?.trim().length > 0)
-              }
+              disabled={!hasResult}
             >
               <Download size={14} /> <span>Unduh Semua (.ZIP)</span>
             </button>
@@ -661,13 +730,21 @@ export default function StudioWorkbench({
           <div className="studio-output-card">
             {/* Top Status */}
             <div className="output-status-bar">
-              <Clock size={14} />
+              {qualityState === "passed" ? <Shield size={14} /> : <Clock size={14} />}
               <span>
                 {isGenerating
-                  ? `SEDANG MENULIS ${activeFile} (${progress}%)`
+                  ? qualityState === "building" && progress <= 10
+                    ? "MENYUSUN BLUEPRINT INTERNAL..."
+                    : qualityState === "validating"
+                      ? "BLUEPRINT QUALITY GATE V2 MEMERIKSA..."
+                      : `SEDANG MENULIS ${activeFile} (${progress}%)`
                   : hasResult
-                    ? "DOKUMEN LENGKAP"
-                    : "MENUNGGU BRIEF"}
+                    ? qualityReport
+                      ? `QUALITY GATE V2 LULUS · ${qualityReport.score}%`
+                      : "DOKUMEN LENGKAP"
+                    : qualityState === "failed"
+                      ? "QUALITY GATE V2 PERLU PERBAIKAN"
+                      : "MENUNGGU BRIEF"}
               </span>
             </div>
 
@@ -749,7 +826,7 @@ export default function StudioWorkbench({
                     fontSize: "0.74rem",
                     color: "var(--cobalt)",
                   }}
-                  onClick={() => setShowRevisionModal(true)}
+                  onClick={openRevisionModal}
                   disabled={!activeContent || isGenerating}
                   title="Minta AI merevisi dokumen ini berdasarkan instruksi Anda"
                 >
@@ -766,7 +843,7 @@ export default function StudioWorkbench({
                     fontSize: "0.74rem",
                   }}
                   onClick={copyActiveContent}
-                  disabled={!activeContent}
+                  disabled={!activeContent || !hasResult}
                   title="Salin isi dokumen"
                 >
                   <Clipboard size={13} /> <span>Salin</span>
@@ -781,7 +858,7 @@ export default function StudioWorkbench({
                     fontSize: "0.74rem",
                   }}
                   onClick={downloadActiveFile}
-                  disabled={!activeContent}
+                  disabled={!activeContent || !hasResult}
                   title="Unduh file .MD"
                 >
                   <Download size={13} /> <span>Unduh .MD</span>
@@ -901,7 +978,7 @@ export default function StudioWorkbench({
               <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
                 <FileText size={18} color="var(--cobalt)" />
                 <strong id="prompt-guide-modal-title" style={{ fontSize: "1.05rem", color: "var(--navy)" }}>
-                  Panduan Prompt untuk 4 Dokumen
+                  Panduan Brief Terstruktur
                 </strong>
               </div>
               <button type="button" className="studio-modal-close" onClick={() => setShowPromptGuide(false)}>
@@ -911,16 +988,18 @@ export default function StudioWorkbench({
 
             <div className="studio-modal-body prompt-guide-modal-body">
               <p>
-                Semakin jelas brief Anda, semakin lengkap hasil PRD, Tech Stack, UI/UX, dan Schema. Jelaskan kebutuhan proyek, bukan hanya nama aplikasinya.
+                Contoh brief cepat menggunakan format yang sama di bawah ini. Anda boleh mengisi sesingkat atau selengkap yang diperlukan; bagian yang belum pasti dapat ditulis sebagai asumsi atau pertanyaan.
               </p>
               <ol className="prompt-guide-modal-list">
-                <li><strong>PRD:</strong> nama produk, target pengguna, masalah, tujuan bisnis, fitur, dan prioritas.</li>
-                <li><strong>Tech Stack:</strong> teknologi pilihan, integrasi, keamanan, performa, serta batasan teknis.</li>
-                <li><strong>UI/UX:</strong> role pengguna, alur utama, halaman yang diperlukan, dan preferensi desain.</li>
-                <li><strong>Schema:</strong> data yang disimpan, relasi antardata, aturan bisnis, dan laporan.</li>
+                <li><strong>Nama / jenis produk:</strong> jelaskan produk atau layanan yang ingin dibuat.</li>
+                <li><strong>Target pengguna, masalah, dan tujuan:</strong> siapa yang memakai serta hasil yang ingin dicapai.</li>
+                <li><strong>Fitur, role, dan alur utama:</strong> prioritas kebutuhan dan perjalanan pengguna inti.</li>
+                <li><strong>Halaman dan pengalaman pengguna:</strong> layar penting, platform, dan preferensi desain.</li>
+                <li><strong>Data, integrasi, dan teknologi:</strong> data yang dikelola serta layanan yang perlu terhubung.</li>
+                <li><strong>Aturan bisnis, keamanan, dan batasan:</strong> validasi, hak akses, compliance, atau ketentuan khusus.</li>
               </ol>
               <div className="prompt-guide-tip">
-                Sebutkan juga hal penting seperti metode pembayaran, notifikasi WhatsApp, hak akses admin, bahasa, platform mobile/web, atau contoh aplikasi referensi bila ada.
+                Anda tidak harus mengisi semua bagian. Cukup jelaskan informasi yang sudah Anda tahu; sistem akan menandai detail lain sebagai asumsi untuk dikonfirmasi.
               </div>
             </div>
 
@@ -937,7 +1016,7 @@ export default function StudioWorkbench({
                   setShowPromptGuide(false);
                 }}
               >
-                Gunakan Format Ini
+                Tambahkan Format ke Brief
               </button>
             </div>
           </div>
@@ -976,7 +1055,7 @@ export default function StudioWorkbench({
 
             <div className="studio-modal-body">
               <p style={{ fontSize: "0.84rem", color: "var(--text-muted)", margin: "0 0 12px", lineHeight: "1.5" }}>
-                Tulis instruksi atau komentar revisi yang ingin Anda terapkan pada dokumen <strong>{activeFile}</strong>. AI akan merevisi dan memperbarui dokumen ini tanpa mengubah dokumen lainnya.
+                Tulis perubahan yang ingin diterapkan pada <strong>{activeFile}</strong>. AI akan menganalisis dampaknya dan menjaga konsistensi dengan blueprint proyek.
               </p>
 
               <textarea
@@ -986,8 +1065,9 @@ export default function StudioWorkbench({
                 onChange={(e) => {
                   setRevisionInstruction(e.target.value);
                   if (revisionError) setRevisionError("");
+                  if (revisionImpact) setRevisionImpact(null);
                 }}
-                placeholder="Contoh: Tambahkan flow integrasi Payment Gateway Midtrans, webhook pembayaran, dan penanganan status gagal bayar..."
+                placeholder={`Contoh: ${REVISION_QUICK_PROMPTS[activeFile][0]?.instruction}`}
                 disabled={isSubmittingRevision}
                 autoFocus
               />
@@ -1000,51 +1080,91 @@ export default function StudioWorkbench({
                   💡 Contoh instruksi cepat:
                 </span>
                 <div style={{ display: "flex", flexWrap: "wrap", gap: "6px", marginTop: "4px" }}>
-                  <button
-                    type="button"
-                    className="hint-chip"
-                    onClick={() => {
-                      setRevisionInstruction(
-                        "Tambahkan detail arsitektur keamanan, otentikasi JWT/OAuth, dan role permission yang lebih spesifik.",
-                      );
-                      if (revisionError) setRevisionError("");
-                    }}
-                  >
-                    + Keamanan & Role
-                  </button>
-                  <button
-                    type="button"
-                    className="hint-chip"
-                    onClick={() => {
-                      setRevisionInstruction(
-                        "Tambahkan integrasi Payment Gateway (Midtrans/Xendit) dengan alur checkout dan webhook.",
-                      );
-                      if (revisionError) setRevisionError("");
-                    }}
-                  >
-                    + Payment Gateway
-                  </button>
-                  <button
-                    type="button"
-                    className="hint-chip"
-                    onClick={() => {
-                      setRevisionInstruction(
-                        "Perjelas edge cases, penanganan galat jaringan, dan mekanisme retry policy.",
-                      );
-                      if (revisionError) setRevisionError("");
-                    }}
-                  >
-                    + Error Handling
-                  </button>
+                  {REVISION_QUICK_PROMPTS[activeFile].map((prompt) => (
+                    <button
+                      key={prompt.label}
+                      type="button"
+                      className="hint-chip"
+                      onClick={() => {
+                        setRevisionInstruction(prompt.instruction);
+                        setRevisionImpact(null);
+                        if (revisionError) setRevisionError("");
+                      }}
+                      disabled={isSubmittingRevision}
+                    >
+                      + {prompt.label}
+                    </button>
+                  ))}
                 </div>
               </div>
+
+              <fieldset style={{ border: 0, padding: 0, margin: "18px 0 0" }}>
+                <legend style={{ fontSize: "0.78rem", fontWeight: 800, color: "var(--navy)", marginBottom: "8px" }}>
+                  Cakupan Revisi
+                </legend>
+                <label style={{ display: "flex", gap: "9px", alignItems: "flex-start", cursor: "pointer", marginBottom: "10px" }}>
+                  <input
+                    type="radio"
+                    name="revision-scope"
+                    checked={revisionScope === "document"}
+                    onChange={() => {
+                      setRevisionScope("document");
+                      setRevisionImpact(null);
+                    }}
+                    disabled={isSubmittingRevision}
+                  />
+                  <span>
+                    <strong style={{ display: "block", fontSize: "0.82rem", color: "var(--navy)" }}>Dokumen ini saja</strong>
+                    <span style={{ fontSize: "0.76rem", color: "var(--text-muted)" }}>Hanya {activeFile} yang akan diperbarui.</span>
+                  </span>
+                </label>
+                <label style={{ display: "flex", gap: "9px", alignItems: "flex-start", cursor: "pointer" }}>
+                  <input
+                    type="radio"
+                    name="revision-scope"
+                    checked={revisionScope === "related"}
+                    onChange={() => {
+                      setRevisionScope("related");
+                      setRevisionImpact(null);
+                    }}
+                    disabled={isSubmittingRevision}
+                  />
+                  <span>
+                    <strong style={{ display: "block", fontSize: "0.82rem", color: "var(--navy)" }}>Sinkronkan dokumen terkait</strong>
+                    <span style={{ fontSize: "0.76rem", color: "var(--text-muted)" }}>AI memperbarui dokumen lain hanya bila perubahan memengaruhi PRD, Tech Stack, UI/UX, atau schema.</span>
+                  </span>
+                </label>
+              </fieldset>
+
+              {revisionImpact && (
+                <div role="alert" style={{ marginTop: "16px", padding: "12px", borderRadius: "10px", border: "1px solid #BFDBFE", background: "#EFF6FF" }}>
+                  <strong style={{ display: "block", fontSize: "0.82rem", color: "#1E3A8A", marginBottom: "7px" }}>Perubahan ini juga memengaruhi:</strong>
+                  <div style={{ display: "flex", flexWrap: "wrap", gap: "6px", marginBottom: "7px" }}>
+                    {revisionImpact.affectedFiles.map((file) => (
+                      <span key={file} style={{ fontSize: "0.73rem", fontWeight: 700, color: "#1D4ED8", background: "#DBEAFE", borderRadius: "999px", padding: "3px 8px" }}>✓ {file}</span>
+                    ))}
+                  </div>
+                  <span style={{ display: "block", fontSize: "0.75rem", color: "#475569", lineHeight: "1.45" }}>{revisionImpact.reasons.join("; ")}.</span>
+                  <div style={{ display: "flex", flexWrap: "wrap", gap: "8px", marginTop: "10px" }}>
+                    <button type="button" className="btn-secondary" onClick={() => void requestRevisionPreview("document", true)} disabled={isSubmittingRevision}>
+                      Revisi {activeFile.replace(".md", "")} saja
+                    </button>
+                    <button type="button" className="btn-primary" onClick={() => void requestRevisionPreview("related", true)} disabled={isSubmittingRevision}>
+                      Sinkronkan {revisionImpact.affectedFiles.length + 1} Dokumen
+                    </button>
+                  </div>
+                </div>
+              )}
             </div>
 
             <div className="studio-modal-footer">
               <button
                 type="button"
                 className="btn-secondary"
-                onClick={() => setShowRevisionModal(false)}
+                onClick={() => {
+                  setShowRevisionModal(false);
+                  setRevisionImpact(null);
+                }}
                 disabled={isSubmittingRevision}
               >
                 Batal
@@ -1052,47 +1172,96 @@ export default function StudioWorkbench({
               <button
                 type="button"
                 className="btn-primary"
-                onClick={async () => {
-                  const trimmed = revisionInstruction.trim();
-                  if (!trimmed) {
-                    setRevisionError("Tuliskan instruksi atau komentar revisi terlebih dahulu.");
-                    return;
-                  }
-                  if (trimmed.length < 5) {
-                    setRevisionError("Instruksi revisi minimal 5 karakter.");
-                    return;
-                  }
-                  const targetModel = availableModels.find((m) => m.id === selectedModel);
-                  if (targetModel?.isFlagship && !isUserPro) {
-                    toast.warning(
-                      `Model Flagship '${targetModel.name}' eksklusif untuk akun Pro Studio. Silakan gunakan model Starter atau upgrade paket.`,
-                    );
-                    return;
-                  }
-
-                  setRevisionError("");
-                  setIsSubmittingRevision(true);
-                  setShowRevisionModal(false);
-                  await reviseDocument(
-                    activeFile,
-                    trimmed,
-                    selectedModel,
-                  );
-                  setRevisionInstruction("");
-                  setIsSubmittingRevision(false);
-                }}
+                onClick={() => void requestRevisionPreview(revisionScope)}
                 disabled={isSubmittingRevision || !revisionInstruction.trim()}
               >
                 {isSubmittingRevision ? (
                   <>
                     <Loader2 size={14} className="animate-spin" />
-                    <span>Sedang Merevisi...</span>
+                    <span>Menyiapkan Perubahan...</span>
                   </>
                 ) : (
                   <>
                     <Send size={14} />
-                    <span>Terapkan Revisi AI</span>
+                    <span>Lihat Perubahan</span>
                   </>
+                )}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {revisionPreview && (
+        <div
+          className="studio-modal-backdrop"
+          onClick={() => !isSubmittingRevision && setRevisionPreview(null)}
+        >
+          <div
+            className="studio-modal-card"
+            onClick={(event) => event.stopPropagation()}
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="revision-preview-title"
+            style={{ maxWidth: "760px" }}
+          >
+            <div className="studio-modal-header">
+              <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+                <Eye size={18} color="var(--cobalt)" />
+                <strong id="revision-preview-title" style={{ fontSize: "1.05rem", color: "var(--navy)" }}>
+                  Perubahan siap diterapkan
+                </strong>
+              </div>
+              <button
+                type="button"
+                className="studio-modal-close"
+                onClick={() => setRevisionPreview(null)}
+                disabled={isSubmittingRevision}
+              >
+                ✕
+              </button>
+            </div>
+
+            <div className="studio-modal-body" style={{ maxHeight: "62vh", overflowY: "auto" }}>
+              <p style={{ fontSize: "0.82rem", color: "var(--text-muted)", margin: "0 0 12px", lineHeight: "1.5" }}>
+                Tinjau draft dari AI sebelum disimpan. Dokumen asli tidak berubah sampai Anda memilih <strong>Terapkan</strong>.
+              </p>
+              {revisionPreview.scope === "document" && revisionPreview.impact.affectedFiles.length > 0 && (
+                <div role="alert" style={{ marginBottom: "12px", padding: "10px 12px", borderRadius: "9px", background: "#FFFBEB", border: "1px solid #FDE68A", color: "#92400E", fontSize: "0.78rem", lineHeight: "1.45" }}>
+                  Perubahan {Object.keys(revisionPreview.after).join(", ")} berpotensi memengaruhi {revisionPreview.impact.affectedFiles.join(", ")}. Quality Gate akan memeriksa konsistensi saat revisi diterapkan.
+                </div>
+              )}
+              {Object.entries(revisionPreview.after).map(([fileName, after]) => {
+                const file = fileName as FileName;
+                const before = revisionPreview.before[file] || "";
+                const diff = createLineDiff(before, after);
+                return (
+                  <section key={file} style={{ marginBottom: "16px" }}>
+                    <strong style={{ display: "block", fontSize: "0.84rem", color: "var(--navy)", marginBottom: "7px" }}>{file}</strong>
+                    <pre style={{ margin: 0, padding: "10px 12px", borderRadius: "9px", background: "#0F172A", color: "#E2E8F0", fontSize: "0.72rem", lineHeight: "1.55", overflowX: "auto", whiteSpace: "pre-wrap" }}>
+                      {diff.map((line, index) => (
+                        <span
+                          key={`${line.kind}-${index}-${line.value}`}
+                          style={{ display: "block", color: line.kind === "added" ? "#86EFAC" : line.kind === "removed" ? "#FCA5A5" : "#94A3B8" }}
+                        >
+                          {line.kind === "added" ? "+ " : line.kind === "removed" ? "- " : "  "}{line.value}
+                        </span>
+                      ))}
+                    </pre>
+                  </section>
+                );
+              })}
+            </div>
+
+            <div className="studio-modal-footer">
+              <button type="button" className="btn-secondary" onClick={() => setRevisionPreview(null)} disabled={isSubmittingRevision}>
+                Batalkan
+              </button>
+              <button type="button" className="btn-primary" onClick={() => void applyPreparedRevision()} disabled={isSubmittingRevision}>
+                {isSubmittingRevision ? (
+                  <><Loader2 size={14} className="animate-spin" /><span>Menyimpan Revisi...</span></>
+                ) : (
+                  <><Send size={14} /><span>Terapkan</span></>
                 )}
               </button>
             </div>

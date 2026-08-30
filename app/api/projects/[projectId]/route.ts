@@ -45,6 +45,10 @@ export async function DELETE(
       sql: "DELETE FROM project_documents WHERE user_email = ? AND project_id = ?",
       args: [user.email, projectId],
     });
+    await db.execute({
+      sql: "DELETE FROM project_blueprints WHERE user_email = ? AND project_id = ?",
+      args: [user.email, projectId],
+    });
 
     return NextResponse.json({
       data: {

@@ -9,7 +9,7 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "test": "node --test tests/unit.test.mjs tests/security.test.mjs",
+    "test": "node --experimental-strip-types --test tests/blueprint-quality.test.ts tests/revision-impact.test.ts && node --test tests/unit.test.mjs tests/security.test.mjs",
     "lint": "eslint . --ignore-pattern .next",
     "bot:wa": "node bot/whatsapp-bot.mjs"
   },

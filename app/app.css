@@ -2647,7 +2647,61 @@ a {
   .four-pillars-grid { grid-template-columns: 1fr; }
   .workflow-row-grid { grid-template-columns: 1fr; }
   .mockup-2x2-grid { grid-template-columns: 1fr; }
-  .quick-prompts-grid { grid-template-columns: 1fr; }
+
+  /* Keep each studio section inside the viewport. Grid and flex children use
+     their min-content width by default, which previously made the phone layout
+     wider than the screen when a document or quick prompt contained long text. */
+  html,
+  body {
+    max-width: 100%;
+    overflow-x: hidden;
+  }
+
+  .studio-viewport-shell,
+  .studio-main-container,
+  .studio-brief-col,
+  .studio-output-col,
+  .studio-brief-card,
+  .studio-output-card,
+  .brief-input-wrap,
+  .quick-prompts-section,
+  .doc-content-container,
+  .doc-scrollable-paper,
+  .doc-paper-layout,
+  .doc-markdown-body,
+  .doc-editor-wrap {
+    min-width: 0;
+    max-width: 100%;
+  }
+
+  .studio-main-container {
+    padding: 14px 12px 24px;
+    gap: 28px;
+  }
+
+  .studio-brief-card {
+    padding: 16px;
+  }
+
+  .brief-input-label-row {
+    align-items: flex-start;
+    flex-wrap: wrap;
+  }
+
+  .brief-textarea {
+    min-width: 0;
+    min-height: 190px;
+  }
+
+  .quick-prompts-grid { grid-template-columns: minmax(0, 1fr); }
+
+  .quick-prompt-btn {
+    min-width: 0;
+    min-height: 38px;
+    white-space: normal;
+    overflow-wrap: anywhere;
+    text-overflow: clip;
+  }
 
   /* Studio Mobile Two-Tier Navbar */
   .studio-top-navbar {
@@ -2704,7 +2758,88 @@ a {
   }
 
   .studio-tabs-row {
-    grid-template-columns: 1fr 1fr;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .studio-tab-button {
+    min-width: 0;
+    padding: 9px 12px;
+  }
+
+  .studio-tab-button strong,
+  .studio-tab-button span {
+    max-width: 100%;
+    overflow-wrap: anywhere;
+  }
+
+  .output-status-bar {
+    padding: 8px 12px;
+    text-align: center;
+    line-height: 1.35;
+  }
+
+  .doc-inner-header {
+    align-items: stretch;
+    flex-direction: column;
+    gap: 8px;
+    padding: 10px 12px;
+  }
+
+  .doc-inner-title {
+    font-size: 0.82rem;
+  }
+
+  .doc-inner-actions {
+    width: 100%;
+    flex-wrap: wrap;
+    gap: 6px;
+  }
+
+  .doc-inner-actions .btn-secondary {
+    flex: 1 1 calc(50% - 3px);
+    justify-content: center;
+    min-width: 0;
+  }
+
+  .doc-scrollable-paper {
+    overflow-x: auto;
+    min-height: 320px;
+  }
+
+  .doc-paper-layout {
+    gap: 10px;
+    padding: 16px 12px;
+  }
+
+  .doc-line-gutter {
+    width: 28px;
+    min-width: 28px;
+    padding-right: 8px;
+  }
+
+  .doc-markdown-body {
+    overflow-wrap: anywhere;
+  }
+
+  .doc-markdown-body table {
+    display: block;
+    max-width: 100%;
+    overflow-x: auto;
+  }
+
+  .doc-editor-wrap {
+    padding: 12px;
+  }
+
+  .doc-editor-bar,
+  .studio-output-footer-bar {
+    flex-wrap: wrap;
+    gap: 6px;
+  }
+
+  .studio-output-footer-bar {
+    align-items: flex-start;
+    padding: 10px 12px;
   }
 
   /* Admin Mobile Adaptations */
@@ -2775,5 +2910,26 @@ a {
 
   .admin-card-header > div:last-child {
     width: 100% !important;
+  }
+}
+
+@media (max-width: 380px) {
+  .studio-action-link span {
+    display: none;
+  }
+
+  .studio-action-link {
+    justify-content: center;
+    min-width: 32px;
+    padding: 5px 7px;
+  }
+
+  .status-pill {
+    max-width: 154px;
+    padding: 5px 9px;
+  }
+
+  .status-pill-text {
+    overflow-wrap: anywhere;
   }
 }

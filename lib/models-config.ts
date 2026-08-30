@@ -153,3 +153,29 @@ export function setCachedModels(models: ModelItem[]): void {
 export function invalidateModelCache(): void {
   modelCache = null;
 }
+
+// ─── Auto-Routing Helpers ────────────────────────────────────────────────
+
+/**
+ * Check if a model ID represents the "auto" routing mode.
+ */
+export function isAutoModel(modelId: string): boolean {
+  return modelId.trim().toLowerCase() === "auto";
+}
+
+/**
+ * Filter models to only those usable for auto-routing:
+ * - Not in maintenance
+ * - Not disabled by provider
+ * - Has a valid ID
+ */
+export function getUsableModels(models: ModelItem[]): ModelItem[] {
+  return models.filter(
+    (m) =>
+      m.id &&
+      m.id !== "auto" &&
+      m.id !== "auto-debug" &&
+      m.id !== "hy3" &&
+      m.healthStatus !== "maintenance",
+  );
+}
