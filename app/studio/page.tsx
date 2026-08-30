@@ -17,7 +17,6 @@ export default function StudioPage() {
   const [isLoading, setIsLoading] = useState(true);
   const [showNewModal, setShowNewModal] = useState(false);
   const [newName, setNewName] = useState("");
-  const [newPrompt, setNewPrompt] = useState("");
   const [isCreating, setIsCreating] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<Project | null>(null);
   const [isDeleting, setIsDeleting] = useState(false);
@@ -59,13 +58,10 @@ export default function StudioPage() {
   };
 
   const handleCreateProject = () => {
-    if (!newName.trim() || !newPrompt.trim()) return;
+    if (!newName.trim()) return;
     setIsCreating(true);
     const slug = `proj_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
-    const params = new URLSearchParams({
-      prompt: newPrompt.trim(),
-      name: newName.trim(),
-    });
+    const params = new URLSearchParams({ name: newName.trim() });
     window.location.href = `/studio/${slug}?${params.toString()}`;
   };
 
@@ -419,7 +415,7 @@ export default function StudioPage() {
                 color: "var(--text-muted, #64748B)",
               }}
             >
-              Beri nama proyek dan jelaskan gambaran besar aplikasi yang ingin Anda bangun.
+              Beri nama proyek terlebih dahulu. Brief lengkap akan ditulis langsung di Workspace.
             </p>
 
             <div style={{ display: "flex", flexDirection: "column", gap: "14px" }}>
@@ -453,39 +449,6 @@ export default function StudioPage() {
                   onBlur={(e) => (e.currentTarget.style.borderColor = "var(--border, #E2E8F0)")}
                 />
               </div>
-
-              <div>
-                <label
-                  style={{
-                    display: "block",
-                    fontSize: "0.82rem",
-                    fontWeight: 700,
-                    color: "var(--navy, #0F172A)",
-                    marginBottom: "6px",
-                  }}
-                >
-                  Deskripsi / Brief Proyek
-                </label>
-                <textarea
-                  value={newPrompt}
-                  onChange={(e) => setNewPrompt(e.target.value)}
-                  placeholder="Jelaskan aplikasi yang ingin Anda bangun, target pengguna, fitur utama, dll."
-                  rows={5}
-                  style={{
-                    width: "100%",
-                    padding: "10px 12px",
-                    borderRadius: "10px",
-                    border: "1.5px solid var(--border, #E2E8F0)",
-                    fontSize: "0.88rem",
-                    outline: "none",
-                    resize: "vertical",
-                    boxSizing: "border-box",
-                    fontFamily: "inherit",
-                  }}
-                  onFocus={(e) => (e.currentTarget.style.borderColor = "var(--cobalt, #2563EB)")}
-                  onBlur={(e) => (e.currentTarget.style.borderColor = "var(--border, #E2E8F0)")}
-                />
-              </div>
             </div>
 
             <div
@@ -508,7 +471,7 @@ export default function StudioPage() {
                 type="button"
                 className="btn-primary"
                 onClick={handleCreateProject}
-                disabled={!newName.trim() || !newPrompt.trim() || isCreating}
+                disabled={!newName.trim() || isCreating}
                 style={{
                   padding: "10px 22px",
                   fontSize: "0.85rem",
