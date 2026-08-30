@@ -18,6 +18,7 @@ import {
   Edit3,
   ArrowRight,
   User,
+  ShieldCheck,
 } from "lucide-react";
 
 type LandingPageProps = {
@@ -153,6 +154,11 @@ const FAQS = [
     a: "Paket Pro Studio Rp 20.000 untuk 100 kredit, atau Pro Max Rp 75.000 untuk 500 kredit (hemat 25%). Sekali bayar, pakai selamanya. Untuk paket Enterprise, silakan hubungi kami via WhatsApp.",
   },
   {
+    icon: ShieldCheck,
+    q: "Bagaimana pembayaran dikonfirmasi?",
+    a: "Setelah membayar melalui QRIS, unggah bukti pembayaran pada invoice Anda. Notifikasi akan diteruskan ke admin melalui WhatsApp untuk konfirmasi manual. Hasil pembacaan AI hanya menjadi referensi dan tidak otomatis menolak pembayaran.",
+  },
+  {
     icon: Edit3,
     q: "Apakah dokumen bisa diekspor dan diedit?",
     a: "Ya, Anda bisa menyalin teks ke clipboard, mengunduh file Markdown (.md) individual, atau langsung mengunduh seluruh 4 dokumen dalam satu arsip ZIP siap pakai ke codebase.",
@@ -163,9 +169,10 @@ export default function LandingPage({ onStart }: LandingPageProps) {
   const [openFaq, setOpenFaq] = useState<number | null>(null);
   const [isAuthenticated, setIsAuthenticated] = useState<boolean | null>(null);
   const [stats, setStats] = useState<{ totalCredits: number; completedDocuments: number; totalUsers: number } | null>(null);
+  const [serviceStatus, setServiceStatus] = useState<"checking" | "operational" | "maintenance" | "interrupted">("checking");
 
   useEffect(() => {
-    fetch("/api/account")
+    fetch("/api/session")
       .then((res) => res.json())
       .then((payload: { authenticated?: boolean }) => {
         setIsAuthenticated(Boolean(payload.authenticated));
@@ -183,7 +190,26 @@ export default function LandingPage({ onStart }: LandingPageProps) {
         });
       })
       .catch(() => {});
+    fetch("/api/models")
+      .then(async (res) => {
+        const payload = (await res.json().catch(() => ({}))) as { providerStatus?: string };
+        if (res.ok) {
+          setServiceStatus("operational");
+        } else {
+          setServiceStatus(payload.providerStatus === "maintenance" ? "maintenance" : "interrupted");
+        }
+      })
+      .catch(() => {
+        setServiceStatus("interrupted");
+      });
   }, []);
+
+  const serviceStatusText = {
+    checking: "Memeriksa status layanan AI",
+    operational: "Layanan AI operasional",
+    maintenance: "Provider AI sedang maintenance",
+    interrupted: "Provider AI sedang mengalami gangguan",
+  }[serviceStatus];
 
   function handleStartAction(prompt?: string) {
     if (isAuthenticated) {
@@ -597,6 +623,17 @@ export default function LandingPage({ onStart }: LandingPageProps) {
             </article>
           ))}
         </div>
+
+        <aside className="landing-payment-trust" aria-label="Informasi verifikasi pembayaran">
+          <div className="landing-payment-trust-icon">
+            <ShieldCheck size={22} strokeWidth={2.2} />
+          </div>
+          <div>
+            <strong>Pembayaran diverifikasi admin, bukan ditolak oleh AI</strong>
+            <p>Unggah bukti QRIS pada invoice Anda. Notifikasi langsung dikirim ke WhatsApp admin untuk konfirmasi manual sebelum kredit ditambahkan.</p>
+          </div>
+          <a href="/pricing" className="landing-payment-trust-link">Lihat cara pembayaran <ArrowRight size={16} /></a>
+        </aside>
       </section>
 
       {/* ── 7. FAQ Accordion Section ───────────────────────────── */}
@@ -684,8 +721,8 @@ export default function LandingPage({ onStart }: LandingPageProps) {
           <div className="footer-bottom-row">
             <span>&copy; {new Date().getFullYear()} Dokumenku AI. Hak cipta dilindungi.</span>
             <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
-              <span className="status-dot" />
-              <span>Sistem AI Operasional (99.9% Uptime)</span>
+              <span className={`status-dot ${serviceStatus === "operational" ? "" : "amber"}`} />
+              <span>{serviceStatusText}</span>
             </div>
           </div>
         </div>

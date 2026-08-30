@@ -7,8 +7,17 @@ export type ModelItem = {
   tier: ModelTier;
   badge: string;
   isFlagship: boolean;
-  successRate?: string;
-  healthStatus?: ModelHealthStatus;
+  healthStatus: ModelHealthStatus;
+  availabilityLabel: string;
+  statusSource: "provider" | "admin";
+  providerGrade?: string;
+  supportsVision?: boolean;
+};
+
+export type ProviderModelMetadata = {
+  enabled?: boolean;
+  grade?: string;
+  vision?: boolean;
 };
 
 const FLAGSHIP_PATTERNS = [
@@ -72,27 +81,50 @@ export function isFlagshipModel(modelId: string): boolean {
 }
 
 // ─── Health Overrides (set by admin via /api/admin/model-health) ─────
-const healthOverrides: Record<string, { status: ModelHealthStatus; successRate: string }> = {};
+// Provider availability remains the default source of truth. An override is
+// only for an explicit temporary administrative decision.
+const healthOverrides: Record<string, { status: ModelHealthStatus; note?: string }> = {};
 
-export function setModelHealthOverride(modelId: string, status: ModelHealthStatus, successRate: string): void {
-  healthOverrides[modelId.trim().toLowerCase()] = { status, successRate };
+export function setModelHealthOverride(modelId: string, status: ModelHealthStatus, note?: string): void {
+  healthOverrides[modelId.trim().toLowerCase()] = { status, note };
 }
 
-export function getModelHealthOverride(modelId: string): { status: ModelHealthStatus; successRate: string } | null {
+export function getModelHealthOverride(modelId: string): { status: ModelHealthStatus; note?: string } | null {
   return healthOverrides[modelId.trim().toLowerCase()] ?? null;
 }
 
-export function classifyModel(id: string, displayName?: string): ModelItem {
+export function getModelHealthOverrides(): Array<{ modelId: string; status: ModelHealthStatus; note?: string }> {
+  return Object.entries(healthOverrides).map(([modelId, override]) => ({ modelId, ...override }));
+}
+
+function getProviderAvailability(enabled: boolean | undefined): Pick<ModelItem, "healthStatus" | "availabilityLabel"> {
+  if (enabled === true) {
+    return { healthStatus: "healthy", availabilityLabel: "Aktif di provider" };
+  }
+
+  if (enabled === false) {
+    return { healthStatus: "degraded", availabilityLabel: "Tidak aktif di provider" };
+  }
+
+  return { healthStatus: "unknown", availabilityLabel: "Status belum tersedia dari provider" };
+}
+
+export function classifyModel(id: string, displayName?: string, providerMetadata: ProviderModelMetadata = {}): ModelItem {
   const isFlagship = isFlagshipModel(id);
   const override = getModelHealthOverride(id);
+  const providerAvailability = getProviderAvailability(providerMetadata.enabled);
+
   return {
     id,
     name: displayName || id,
     tier: isFlagship ? "pro" : "starter",
     badge: isFlagship ? "Flagship (Pro)" : "Starter",
     isFlagship,
-    healthStatus: override?.status ?? "healthy",
-    successRate: override?.successRate ?? "100%",
+    healthStatus: override?.status ?? providerAvailability.healthStatus,
+    availabilityLabel: override?.note || (override ? "Status diatur admin" : providerAvailability.availabilityLabel),
+    statusSource: override ? "admin" : "provider",
+    providerGrade: providerMetadata.grade,
+    supportsVision: providerMetadata.vision,
   };
 }
 

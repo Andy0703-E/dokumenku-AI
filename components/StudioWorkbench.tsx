@@ -36,8 +36,11 @@ type ModelOption = {
   tier?: "starter" | "pro";
   badge?: string;
   isFlagship?: boolean;
-  successRate?: string;
   healthStatus?: "healthy" | "degraded" | "maintenance" | "unknown";
+  availabilityLabel?: string;
+  statusSource?: "provider" | "admin";
+  providerGrade?: string;
+  supportsVision?: boolean;
 };
 
 const QUICK_PROMPTS = [
@@ -58,6 +61,16 @@ const QUICK_PROMPTS = [
     text: "Platform marketplace jasa freelance lokal dengan escrow payment, milestone tracking, real-time chat, review rating, dan sistem verifikasi identitas freelancer.",
   },
 ];
+
+const FULL_BRIEF_TEMPLATE = `Nama / jenis produk:
+Target pengguna utama:
+Masalah yang ingin diselesaikan dan tujuan bisnis:
+Fitur utama beserta prioritasnya:
+Role pengguna dan alur utama yang diharapkan:
+Halaman / pengalaman pengguna yang diperlukan:
+Data penting, integrasi, dan teknologi yang diinginkan:
+Aturan bisnis, keamanan, atau batasan khusus:
+Preferensi desain, bahasa, atau contoh referensi:`;
 
 type StudioWorkbenchProps = {
   initialPrompt?: string;
@@ -86,6 +99,7 @@ export default function StudioWorkbench({
   const [isAuthenticated, setIsAuthenticated] = useState<boolean>(false);
   const [showOutOfCreditsModal, setShowOutOfCreditsModal] = useState<boolean>(false);
   const [promptError, setPromptError] = useState<string>("");
+  const [showPromptGuide, setShowPromptGuide] = useState(false);
   const [revisionError, setRevisionError] = useState<string>("");
 
   const [isEditMode, setIsEditMode] = useState(false);
@@ -130,7 +144,7 @@ export default function StudioWorkbench({
         const models = payload.data.filter((m) => Boolean(m.id));
         setAvailableModels(models);
 
-        // Auto-select 100% healthy active model (deepseek-v4-flash-0731 for Starter, glm-5.3/mod for Pro)
+        // Auto-select a model that the provider currently marks as enabled.
         let defaultModel = "";
         if (userPro) {
           const healthyFlagship = models.find((m) => m.isFlagship && m.healthStatus === "healthy");
@@ -169,7 +183,7 @@ export default function StudioWorkbench({
 
   async function loadAccount() {
     try {
-      const response = await fetch("/api/account");
+      const response = await fetch("/api/account?view=summary");
       const payload = (await response.json()) as {
         authenticated?: boolean;
         role?: string;
@@ -415,9 +429,9 @@ export default function StudioWorkbench({
                       toast.warning(
                         `Model '${m.name}' sedang dalam maintenance di provider. Silakan pilih model yang aktif atau coba kembali setelah pemeliharaan selesai.`,
                       );
-                    } else if (m?.healthStatus === "degraded") {
+                    } else if (m?.healthStatus === "degraded" || m?.healthStatus === "unknown") {
                       toast.warning(
-                        `⚠️ Provider upstream mencatat model '${m.name}' sedang mengalami gangguan (0% success). Disarankan beralih ke 'deepseek-v4-flash-0731' (Starter) atau 'glm-5.3' (Pro).`,
+                        `Provider melaporkan model '${m.name}' ${m.availabilityLabel?.toLowerCase() || "belum tersedia"}. Pilih model lain yang aktif.`,
                       );
                     }
                     setSelectedModel(val);
@@ -427,7 +441,7 @@ export default function StudioWorkbench({
                 >
                   {isProviderActive && availableModels.length > 0 ? (
                     <>
-                      <optgroup label="🟢 Model Aktif & Siap Pakai (100% Online)">
+                      <optgroup label="🟢 Model Aktif di Provider">
                         {availableModels
                           .filter((m) => m.healthStatus === "healthy")
                           .map((m) => (
@@ -436,11 +450,11 @@ export default function StudioWorkbench({
                               value={m.id}
                               disabled={m.isFlagship && !isUserPro}
                             >
-                              🟢 {m.name} {m.isFlagship ? (isUserPro ? "(Pro Flagship • 100%)" : "(🔒 Butuh Pro)") : "(Starter • 100%)"}
+                              🟢 {m.name} {m.isFlagship ? (isUserPro ? "(Pro Flagship • Aktif)" : "(🔒 Butuh Pro)") : "(Starter • Aktif)"}
                             </option>
                           ))}
                       </optgroup>
-                      <optgroup label="⚠️ Model Maintenance / Gangguan di Provider">
+                      <optgroup label="⚠️ Model Tidak Tersedia / Belum Terverifikasi">
                         {availableModels
                           .filter((m) => m.healthStatus !== "healthy")
                           .map((m) => (
@@ -449,7 +463,7 @@ export default function StudioWorkbench({
                               value={m.id}
                               disabled={true}
                             >
-                              ⚠️ {m.name} ({m.healthStatus === "maintenance" ? "Maintenance Provider" : "Offline di Provider Upstream"})
+                              ⚠️ {m.name} ({m.availabilityLabel || (m.healthStatus === "maintenance" ? "Maintenance provider" : "Tidak tersedia di provider")})
                             </option>
                           ))}
                       </optgroup>
@@ -469,23 +483,14 @@ export default function StudioWorkbench({
                       Model ini sedang dalam <strong>maintenance provider</strong>. Pembuatan dokumen sementara tidak tersedia; silakan pilih model aktif atau coba kembali setelah pemeliharaan selesai.
                     </span>
                   </div>
-                ) : availableModels.find((m) => m.id === selectedModel)?.healthStatus === "degraded" ? (
+                ) : ["degraded", "unknown"].includes(availableModels.find((m) => m.id === selectedModel)?.healthStatus || "") ? (
                   <div className="provider-alert-amber" style={{ marginTop: "4px" }} role="alert">
                     <AlertTriangle size={15} style={{ flexShrink: 0, marginTop: "1px" }} />
                     <span>
-                      Server upstream melaporkan model ini 0% success (downtime). Disarankan beralih ke <strong>deepseek-v4-flash</strong> (Starter) atau <strong>glm-5.3</strong> (Pro).
+                      Provider melaporkan model ini <strong>{availableModels.find((m) => m.id === selectedModel)?.availabilityLabel?.toLowerCase() || "belum tersedia"}</strong>. Silakan pilih model lain yang aktif.
                     </span>
                   </div>
-                ) : (
-                  <div className="provider-status-msg">
-                    <span className="status-dot" />
-                    <span>
-                      {availableModels.find((m) => m.id === selectedModel)?.healthStatus === "healthy"
-                        ? `Model ${availableModels.find((m) => m.id === selectedModel)?.name} aktif 100% & siap memproses brief.`
-                        : "Model AI terpilih siap memproses brief rekayasa."}
-                    </span>
-                  </div>
-                )
+                ) : null
               ) : (
                 <div className="provider-alert-amber" role="alert">
                   <AlertTriangle
@@ -506,7 +511,17 @@ export default function StudioWorkbench({
 
             {/* Brief Input Textarea */}
             <div className="brief-input-wrap">
-              <label htmlFor="brief-text-input">Brief proyek Anda</label>
+              <div className="brief-input-label-row">
+                <label htmlFor="brief-text-input">Brief proyek Anda</label>
+                <button
+                  type="button"
+                  className="prompt-guide-trigger"
+                  onClick={() => setShowPromptGuide(true)}
+                  disabled={isGenerating}
+                >
+                  <FileText size={13} aria-hidden="true" /> Panduan prompt lengkap
+                </button>
+              </div>
               <textarea
                 id="brief-text-input"
                 className={`brief-textarea ${promptError ? "has-error" : ""}`}
@@ -516,7 +531,7 @@ export default function StudioWorkbench({
                   if (promptError) validatePrompt(e.target.value);
                 }}
                 onBlur={() => projectPrompt && validatePrompt(projectPrompt)}
-                placeholder="Contoh: Buat aplikasi absensi siswa menggunakan QR Code dan GPS..."
+                placeholder="Jelaskan produk, target pengguna, fitur, alur, halaman, data/integrasi, dan batasan yang Anda butuhkan..."
                 disabled={isGenerating}
               />
               {promptError && (
@@ -871,6 +886,63 @@ export default function StudioWorkbench({
           </div>
         </section>
       </div>
+
+      {/* ── Modal Panduan Prompt ───────────────────────────────── */}
+      {showPromptGuide && (
+        <div className="studio-modal-backdrop" onClick={() => setShowPromptGuide(false)}>
+          <div
+            className="studio-modal-card"
+            onClick={(e) => e.stopPropagation()}
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="prompt-guide-modal-title"
+          >
+            <div className="studio-modal-header">
+              <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+                <FileText size={18} color="var(--cobalt)" />
+                <strong id="prompt-guide-modal-title" style={{ fontSize: "1.05rem", color: "var(--navy)" }}>
+                  Panduan Prompt untuk 4 Dokumen
+                </strong>
+              </div>
+              <button type="button" className="studio-modal-close" onClick={() => setShowPromptGuide(false)}>
+                ✕
+              </button>
+            </div>
+
+            <div className="studio-modal-body prompt-guide-modal-body">
+              <p>
+                Semakin jelas brief Anda, semakin lengkap hasil PRD, Tech Stack, UI/UX, dan Schema. Jelaskan kebutuhan proyek, bukan hanya nama aplikasinya.
+              </p>
+              <ol className="prompt-guide-modal-list">
+                <li><strong>PRD:</strong> nama produk, target pengguna, masalah, tujuan bisnis, fitur, dan prioritas.</li>
+                <li><strong>Tech Stack:</strong> teknologi pilihan, integrasi, keamanan, performa, serta batasan teknis.</li>
+                <li><strong>UI/UX:</strong> role pengguna, alur utama, halaman yang diperlukan, dan preferensi desain.</li>
+                <li><strong>Schema:</strong> data yang disimpan, relasi antardata, aturan bisnis, dan laporan.</li>
+              </ol>
+              <div className="prompt-guide-tip">
+                Sebutkan juga hal penting seperti metode pembayaran, notifikasi WhatsApp, hak akses admin, bahasa, platform mobile/web, atau contoh aplikasi referensi bila ada.
+              </div>
+            </div>
+
+            <div className="studio-modal-footer">
+              <button type="button" className="btn-secondary" onClick={() => setShowPromptGuide(false)}>
+                Tutup
+              </button>
+              <button
+                type="button"
+                className="btn-primary"
+                onClick={() => {
+                  setProjectPrompt((current) => current.trim() ? `${current.trim()}\n\n${FULL_BRIEF_TEMPLATE}` : FULL_BRIEF_TEMPLATE);
+                  setPromptError("");
+                  setShowPromptGuide(false);
+                }}
+              >
+                Gunakan Format Ini
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* ── Modal Dialog Revisi AI ──────────────────────────────── */}
       {showRevisionModal && (

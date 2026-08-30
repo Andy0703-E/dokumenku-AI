@@ -2,29 +2,50 @@ import { NextResponse } from "next/server";
 import { getDatabase } from "@/db";
 import { getCurrentUser } from "@/lib/auth";
 
-export async function GET() {
+export async function GET(request: Request) {
   const user = await getCurrentUser();
   const { cookies } = await import("next/headers");
+  const isSummaryRequest = new URL(request.url).searchParams.get("view") === "summary";
 
   if (user) {
     try {
       const db = await getDatabase();
-      const accountResult = await db.execute({
-        sql: "SELECT email, available_credits, created_at AS createdAt, updated_at AS updatedAt FROM users WHERE email = ?",
-        args: [user.email],
-      });
+      const [accountResult, purchasedResult] = await Promise.all([
+        db.execute({
+          sql: "SELECT email, available_credits, created_at AS createdAt, updated_at AS updatedAt FROM users WHERE email = ?",
+          args: [user.email],
+        }),
+        db.execute({
+          sql: "SELECT 1 FROM credit_transactions WHERE user_email = ? AND amount > 3 AND reason != 'Kredit awal akun baru' LIMIT 1",
+          args: [user.email],
+        }),
+      ]);
       const account = accountResult.rows[0] as unknown as { email: string; available_credits: number; createdAt: string; updatedAt: string } | undefined;
-
-      const purchasedResult = await db.execute({
-        sql: "SELECT 1 FROM credit_transactions WHERE user_email = ? AND amount > 3 AND reason != 'Kredit awal akun baru' LIMIT 1",
-        args: [user.email],
-      });
       const purchased = purchasedResult.rows[0];
 
-      const generationsResult = await db.execute({
-        sql: "SELECT id, model, prompt, status, created_at AS createdAt, completed_at AS completedAt FROM document_generations WHERE user_email = ? ORDER BY created_at DESC LIMIT 50",
-        args: [user.email],
-      });
+      const summary = {
+        authenticated: true,
+        email: user.email,
+        role: user.role,
+        credits: account?.available_credits ?? 0,
+        createdAt: account?.createdAt ?? new Date().toISOString(),
+        isPro: Boolean(purchased) || user.role === "admin",
+      };
+
+      if (isSummaryRequest) {
+        return NextResponse.json(summary);
+      }
+
+      const [generationsResult, transactionsResult] = await Promise.all([
+        db.execute({
+          sql: "SELECT id, model, prompt, status, created_at AS createdAt, completed_at AS completedAt FROM document_generations WHERE user_email = ? ORDER BY created_at DESC LIMIT 50",
+          args: [user.email],
+        }),
+        db.execute({
+          sql: "SELECT id, amount, reason, created_at AS createdAt FROM credit_transactions WHERE user_email = ? ORDER BY id DESC LIMIT 50",
+          args: [user.email],
+        }),
+      ]);
       const generations = generationsResult.rows as unknown as Array<{
         id: string;
         model: string;
@@ -33,11 +54,6 @@ export async function GET() {
         createdAt: string;
         completedAt: string | null;
       }>;
-
-      const transactionsResult = await db.execute({
-        sql: "SELECT id, amount, reason, created_at AS createdAt FROM credit_transactions WHERE user_email = ? ORDER BY id DESC LIMIT 50",
-        args: [user.email],
-      });
       const transactions = transactionsResult.rows as unknown as Array<{
         id: number;
         amount: number;
@@ -45,16 +61,7 @@ export async function GET() {
         createdAt: string;
       }>;
 
-      return NextResponse.json({
-        authenticated: true,
-        email: user.email,
-        role: user.role,
-        credits: account?.available_credits ?? 0,
-        createdAt: account?.createdAt ?? new Date().toISOString(),
-        isPro: Boolean(purchased) || user.role === "admin",
-        generations,
-        transactions,
-      });
+      return NextResponse.json({ ...summary, generations, transactions });
     } catch (error) {
       return NextResponse.json(
         { error: error instanceof Error ? error.message : "Akun tidak dapat dimuat." },

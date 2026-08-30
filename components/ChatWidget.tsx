@@ -25,15 +25,22 @@ export default function ChatWidget() {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, []);
 
-  useEffect(() => {
-    fetch("/api/account")
-      .then((r) => r.json())
-      .then((p: { authenticated?: boolean; name?: string; email?: string }) => {
-        setIsAuthed(Boolean(p.authenticated));
-        if (p.email) setUserName(p.email.split("@")[0]);
-      })
-      .catch(() => setIsAuthed(false));
+  const loadSession = useCallback(async () => {
+    try {
+      const res = await fetch("/api/session");
+      const payload = (await res.json()) as { authenticated?: boolean; email?: string };
+      setIsAuthed(Boolean(payload.authenticated));
+      if (payload.email) setUserName(payload.email.split("@")[0]);
+    } catch {
+      setIsAuthed(false);
+    }
   }, []);
+
+  useEffect(() => {
+    if (isOpen && isAuthed === null) {
+      void loadSession();
+    }
+  }, [isOpen, isAuthed, loadSession]);
 
   const loadHistory = useCallback(async () => {
     if (!isAuthed) return;

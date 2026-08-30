@@ -2,20 +2,12 @@ import { NextResponse } from "next/server";
 import { getDatabase } from "@/db";
 import { getCurrentAdmin } from "@/lib/auth";
 import { classifyModel, getCachedModels, setCachedModels, type ModelItem } from "@/lib/models-config";
-import { bootstrapModelHealth } from "@/app/api/admin/model-health/route";
 
 const PROVIDER_BASE_URL = "https://bandelbanget.xyz/v1";
-
-let bootstrapped = false;
 
 export async function GET() {
   if (!(await getCurrentAdmin())) {
     return NextResponse.json({ error: "Masuk sebagai admin diperlukan." }, { status: 403 });
-  }
-
-  if (!bootstrapped) {
-    bootstrapModelHealth();
-    bootstrapped = true;
   }
 
   try {
@@ -62,8 +54,10 @@ export async function GET() {
           name: m.name,
           isFlagship: m.isFlagship,
           tier: m.tier,
-          successRate: m.successRate,
           healthStatus: m.healthStatus,
+          availabilityLabel: m.availabilityLabel,
+          statusSource: m.statusSource,
+          providerGrade: m.providerGrade,
         }));
       } else {
         try {
@@ -74,10 +68,14 @@ export async function GET() {
             const modelsPayload = await modelsRes.json();
             if (Array.isArray(modelsPayload.data)) {
               const classified: ModelItem[] = modelsPayload.data.map(
-                (m: { id?: string; name?: string; display_name?: string }) => {
+                (m: { id?: string; name?: string; display_name?: string; enabled?: boolean; grade?: string; vision?: boolean }) => {
                   const id = m.id ?? "";
                   const name = m.name || m.display_name || id;
-                  return classifyModel(id, name);
+                  return classifyModel(id, name, {
+                    enabled: m.enabled,
+                    grade: m.grade,
+                    vision: m.vision,
+                  });
                 },
               );
               setCachedModels(classified);
@@ -87,8 +85,10 @@ export async function GET() {
                 name: m.name,
                 isFlagship: m.isFlagship,
                 tier: m.tier,
-                successRate: m.successRate,
                 healthStatus: m.healthStatus,
+                availabilityLabel: m.availabilityLabel,
+                statusSource: m.statusSource,
+                providerGrade: m.providerGrade,
               }));
             }
           }

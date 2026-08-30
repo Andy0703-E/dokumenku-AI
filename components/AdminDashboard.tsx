@@ -53,8 +53,10 @@ type Overview = {
       name: string;
       isFlagship: boolean;
       tier: string;
-      successRate?: string;
       healthStatus?: string;
+      availabilityLabel?: string;
+      statusSource?: "provider" | "admin";
+      providerGrade?: string;
     }>;
   };
   users: Array<{ email: string; credits: number; updatedAt: string }>;
@@ -1680,8 +1682,8 @@ export default function AdminDashboard() {
                     style={{
                       padding: "10px 12px",
                       borderRadius: "10px",
-                      background: m.isFlagship ? "#FAF5FF" : "#F0FDF4",
-                      border: `1px solid ${m.isFlagship ? "#E9D5FF" : "#BBF7D0"}`,
+                      background: m.healthStatus === "healthy" ? (m.isFlagship ? "#FAF5FF" : "#F0FDF4") : "#FFFBEB",
+                      border: `1px solid ${m.healthStatus === "healthy" ? (m.isFlagship ? "#E9D5FF" : "#BBF7D0") : "#FDE68A"}`,
                       display: "flex",
                       flexDirection: "column",
                       gap: "4px",
@@ -1704,19 +1706,19 @@ export default function AdminDashboard() {
                         >
                           {m.isFlagship ? "Flagship (Pro)" : "Starter"}
                         </span>
-                        {m.successRate && (
+                        {m.availabilityLabel && (
                           <span
                             style={{
                               fontSize: "0.68rem",
                               fontWeight: 700,
                               padding: "2px 6px",
                               borderRadius: "6px",
-                              background: m.healthStatus === "healthy" ? "#ECFDF5" : "#FEF2F2",
-                              color: m.healthStatus === "healthy" ? "#065F46" : "#B91C1C",
-                              border: `1px solid ${m.healthStatus === "healthy" ? "#A7F3D0" : "#FECACA"}`,
+                              background: m.healthStatus === "healthy" ? "#ECFDF5" : "#FEF3C7",
+                              color: m.healthStatus === "healthy" ? "#065F46" : "#92400E",
+                              border: `1px solid ${m.healthStatus === "healthy" ? "#A7F3D0" : "#FDE68A"}`,
                             }}
                           >
-                            {m.successRate}
+                            {m.availabilityLabel}
                           </span>
                         )}
                       </div>
@@ -1724,6 +1726,11 @@ export default function AdminDashboard() {
                     <code style={{ fontSize: "0.72rem", color: "var(--text-muted)", wordBreak: "break-all" }}>
                       ID: {m.id}
                     </code>
+                    {m.providerGrade && (
+                      <span style={{ fontSize: "0.7rem", color: "var(--text-muted)" }}>
+                        Grade provider: {m.providerGrade}
+                      </span>
+                    )}
                   </div>
                 ))}
               </div>

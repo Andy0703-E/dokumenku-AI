@@ -121,7 +121,7 @@ const faqItems = [
   {
     icon: MessageCircle,
     q: "Bagaimana cara melakukan pembelian paket Pro?",
-    a: "Saat ini Anda dapat mendaftar akun gratis terlebih dahulu dan menghubungi admin melalui panel atau email untuk top up kredit instan via QRIS / transfer.",
+    a: "Pilih paket, bayar melalui QRIS, lalu unggah bukti pembayaran pada invoice. Notifikasi akan dikirim ke WhatsApp admin untuk konfirmasi manual. Kredit ditambahkan setelah pembayaran dikonfirmasi.",
   },
 ];
 
@@ -163,7 +163,7 @@ export default function PricingPage() {
   } | null>(null);
 
   useEffect(() => {
-    fetch("/api/account")
+    fetch("/api/session")
       .then((res) => res.json())
       .then((payload: { authenticated?: boolean }) => {
         setIsAuthenticated(Boolean(payload.authenticated));
@@ -716,7 +716,7 @@ export default function PricingPage() {
                       <span>Kredit Diperoleh: <strong style={{ color: "#059669" }}>+100 Kredit Pro Studio</strong></span>
                     </div>
                     <p style={{ margin: "4px 0 0", color: "var(--text-muted)", fontSize: "0.72rem" }}>
-                      ⚠️ <em>Pembayaran hanya dianggap berhasil setelah transaksi dikonfirmasi melalui mutasi pembayaran. Gambar bukti digunakan sebagai bukti pendukung dan tidak otomatis menambahkan kredit.</em>
+                      <strong>Alur aman:</strong> bayar QRIS → unggah bukti → notifikasi masuk ke WhatsApp admin → kredit ditambahkan setelah admin mengonfirmasi. AI hanya membaca data sebagai referensi, bukan untuk menolak pembayaran.
                     </p>
                   </div>
 

@@ -3,17 +3,10 @@ import { getCurrentUser } from "@/lib/auth";
 import { getDatabase } from "@/db";
 import { classifyModel, getCachedModels, setCachedModels, type ModelItem } from "@/lib/models-config";
 import { isProviderMaintenance, PROVIDER_MAINTENANCE_MESSAGE } from "@/lib/provider-maintenance";
-import { bootstrapModelHealth } from "@/app/api/admin/model-health/route";
 
 const PROVIDER_BASE_URL = "https://bandelbanget.xyz/v1";
 
-let bootstrapped = false;
-
 export async function GET() {
-  if (!bootstrapped) {
-    bootstrapModelHealth();
-    bootstrapped = true;
-  }
   const apiKey = process.env.BANDELBANGET_API_KEY;
   if (!apiKey) {
     return NextResponse.json(
@@ -75,10 +68,14 @@ export async function GET() {
           return id && id !== "auto" && id !== "auto-debug" && id !== "hy3";
         })
         .map(
-          (m: { id?: string; name?: string; display_name?: string }) => {
+          (m: { id?: string; name?: string; display_name?: string; enabled?: boolean; grade?: string; vision?: boolean }) => {
             const id = m.id ?? "";
             const name = m.name || m.display_name || id;
-            return classifyModel(id, name);
+            return classifyModel(id, name, {
+              enabled: m.enabled,
+              grade: m.grade,
+              vision: m.vision,
+            });
           },
         );
 

@@ -837,6 +837,58 @@ a {
   flex-shrink: 0;
 }
 
+.landing-payment-trust {
+  max-width: 900px;
+  margin: 28px auto 0;
+  padding: 18px 20px;
+  border: 1px solid #BDEBD8;
+  border-radius: 16px;
+  background: linear-gradient(100deg, #F0FDF7 0%, #F8FBFF 100%);
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+
+.landing-payment-trust-icon {
+  width: 42px;
+  height: 42px;
+  flex: 0 0 42px;
+  display: grid;
+  place-items: center;
+  border-radius: 12px;
+  background: #D1FAE5;
+  color: #047857;
+}
+
+.landing-payment-trust strong {
+  display: block;
+  color: var(--navy);
+  font-size: 0.9rem;
+}
+
+.landing-payment-trust p {
+  margin: 3px 0 0;
+  color: var(--text-muted);
+  font-size: 0.8rem;
+  line-height: 1.5;
+}
+
+.landing-payment-trust-link {
+  margin-left: auto;
+  white-space: nowrap;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--cobalt);
+  font-size: 0.8rem;
+  font-weight: 750;
+  text-decoration: none;
+}
+
+.landing-payment-trust-link:hover {
+  text-decoration: underline;
+}
+
 /* FAQ Accordion */
 .faq-accordion-container {
   max-width: 860px;
@@ -1283,6 +1335,37 @@ a {
   color: var(--navy);
 }
 
+.brief-input-label-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.prompt-guide-trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-height: 24px;
+  padding: 0 7px;
+  border: 1px solid var(--cobalt-border);
+  border-radius: 6px;
+  background: #FFFFFF;
+  color: var(--cobalt);
+  font-size: 0.68rem;
+  font-weight: 750;
+  cursor: pointer;
+}
+
+.prompt-guide-trigger:hover:not(:disabled) {
+  background: var(--cobalt-light);
+}
+
+.prompt-guide-trigger:disabled {
+  cursor: not-allowed;
+  opacity: 0.65;
+}
+
 .brief-textarea {
   width: 100%;
   flex: 1;
@@ -1673,6 +1756,42 @@ a {
   display: flex;
   flex-direction: column;
   gap: 12px;
+}
+
+.prompt-guide-modal-body p {
+  margin: 0;
+  font-size: 0.84rem;
+  line-height: 1.55;
+  color: var(--text-muted);
+}
+
+.prompt-guide-modal-list {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  margin: 0;
+  padding-left: 20px;
+  color: var(--text-muted);
+}
+
+.prompt-guide-modal-list li {
+  padding-left: 2px;
+  font-size: 0.8rem;
+  line-height: 1.45;
+}
+
+.prompt-guide-modal-list strong {
+  color: var(--navy);
+}
+
+.prompt-guide-tip {
+  padding: 10px 12px;
+  border: 1px solid var(--cobalt-border);
+  border-radius: 10px;
+  background: var(--cobalt-light);
+  color: var(--navy);
+  font-size: 0.78rem;
+  line-height: 1.5;
 }
 
 .studio-revision-textarea {
@@ -2428,6 +2547,8 @@ a {
   .four-pillars-grid { grid-template-columns: repeat(2, 1fr); }
   .workflow-row-grid { grid-template-columns: repeat(2, 1fr); }
   .landing-pricing-grid { grid-template-columns: 1fr; max-width: 460px; margin: 0 auto; }
+  .landing-payment-trust { align-items: flex-start; flex-wrap: wrap; }
+  .landing-payment-trust-link { width: 100%; margin-left: 56px; }
   .stats-bar-grid { grid-template-columns: repeat(2, 1fr); }
   
   /* Studio Responsive in Mobile/Tablet */
