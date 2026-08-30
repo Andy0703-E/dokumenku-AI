@@ -9,6 +9,12 @@ export function getProviderError(
   const normalizedMessage = message?.toLowerCase() ?? "";
   const modelLabel = modelId ? ` '${modelId}'` : "";
 
+  if (
+    normalizedMessage.includes("maintenance") ||
+    normalizedMessage.includes("pemeliharaan")
+  ) {
+    return "Provider AI sedang dalam maintenance. Pembuatan dokumen sementara tidak tersedia; silakan coba kembali setelah pemeliharaan selesai. Kredit Anda tetap aman.";
+  }
   if (status === 401 || normalizedMessage.includes("invalid api key")) {
     return "Layanan belum dikonfigurasi oleh admin atau API key tidak valid.";
   }

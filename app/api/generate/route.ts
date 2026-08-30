@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getDatabase } from "@/db";
 import { getCurrentUser } from "@/lib/auth";
 import { isFlagshipModel } from "@/lib/models-config";
+import { isProviderMaintenance, PROVIDER_MAINTENANCE_MESSAGE } from "@/lib/provider-maintenance";
 
 const PROVIDER_BASE_URL = "https://bandelbanget.xyz/v1";
 
@@ -96,6 +97,12 @@ export async function POST(request: NextRequest) {
 
   if (!upstreamResponse.ok) {
     const errorPayload = await upstreamResponse.text();
+    if (isProviderMaintenance(upstreamResponse.status, errorPayload)) {
+      return NextResponse.json(
+        { error: PROVIDER_MAINTENANCE_MESSAGE, providerStatus: "maintenance" },
+        { status: 503 },
+      );
+    }
     try {
       return NextResponse.json(JSON.parse(errorPayload), { status: upstreamResponse.status });
     } catch {

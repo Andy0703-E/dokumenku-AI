@@ -30,6 +30,31 @@ interface ExtractedOcrData {
   notes?: string;
 }
 
+function getOcrContentText(content: unknown): string {
+  if (typeof content === "string") return content;
+  if (Array.isArray(content)) {
+    return content.map((part) => getOcrContentText(part)).join("");
+  }
+  if (!content || typeof content !== "object") return "";
+  const value = content as Record<string, unknown>;
+  return getOcrContentText(value.text) || getOcrContentText(value.content) || getOcrContentText(value.value);
+}
+
+function parseOcrResult(content: unknown): Partial<ExtractedOcrData> | null {
+  const raw = getOcrContentText(content).trim();
+  if (!raw) return null;
+
+  const withoutCodeFence = raw.replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/i, "").trim();
+  const jsonText = withoutCodeFence.startsWith("{")
+    ? withoutCodeFence
+    : withoutCodeFence.match(/\{[\s\S]*\}/)?.[0];
+
+  if (!jsonText) return null;
+
+  const parsed = JSON.parse(jsonText) as Record<string, unknown>;
+  return parsed;
+}
+
 export async function POST(request: NextRequest) {
   const requestId = generateRequestId();
   const user = await getCurrentUser();
@@ -147,58 +172,66 @@ Jika gambar buram/bukan struk, isi "extracted_code": "IMAGE_UNREADABLE".`;
             temperature: 0.1,
             response_format: { type: "json_object" },
           }),
-          signal: AbortSignal.timeout(18000),
+          signal: AbortSignal.timeout(30000),
         });
 
         if (aiResponse.ok) {
-          const aiJson = await aiResponse.json();
+          const aiJson = await aiResponse.json() as { choices?: Array<{ message?: { content?: unknown } }> };
           const content = aiJson.choices?.[0]?.message?.content;
-          if (content) {
-            const parsed = JSON.parse(content);
+          const parsed = parseOcrResult(content);
+          if (parsed) {
+            const extractedCode = parsed.extracted_code === "DATA_MISMATCH" || parsed.extracted_code === "IMAGE_UNREADABLE"
+              ? parsed.extracted_code
+              : "NEEDS_BACKEND_VERIFICATION";
             extracted = {
-              merchant_name: parsed.merchant_name || "Tidak terdeteksi",
-              nmid: parsed.nmid || "Tidak terdeteksi",
-              amount: parsed.amount || "Tidak terdeteksi",
-              transaction_id: parsed.transaction_id || "Tidak terdeteksi",
-              transaction_date: parsed.transaction_date || "Tidak terdeteksi",
-              displayed_payment_status: parsed.displayed_payment_status || "Tidak terdeteksi",
-              payment_provider: parsed.payment_provider || "QRIS",
-              extracted_code: parsed.extracted_code || "NEEDS_BACKEND_VERIFICATION",
-              notes: parsed.notes || "Data berhasil diekstrak dari gambar struk.",
+              merchant_name: typeof parsed.merchant_name === "string" ? parsed.merchant_name : "Tidak terdeteksi",
+              nmid: typeof parsed.nmid === "string" ? parsed.nmid : "Tidak terdeteksi",
+              amount: typeof parsed.amount === "string" ? parsed.amount : "Tidak terdeteksi",
+              transaction_id: typeof parsed.transaction_id === "string" ? parsed.transaction_id : "Tidak terdeteksi",
+              transaction_date: typeof parsed.transaction_date === "string" ? parsed.transaction_date : "Tidak terdeteksi",
+              displayed_payment_status: typeof parsed.displayed_payment_status === "string" ? parsed.displayed_payment_status : "Tidak terdeteksi",
+              payment_provider: typeof parsed.payment_provider === "string" ? parsed.payment_provider : "QRIS",
+              extracted_code: extractedCode,
+              notes: typeof parsed.notes === "string" ? parsed.notes : "Data berhasil diekstrak dari gambar struk.",
             };
+          } else {
+            extracted.notes = "Provider OCR merespons, tetapi tidak mengirim data struk yang dapat dibaca. Menunggu konfirmasi manual admin melalui WhatsApp.";
           }
+        } else {
+          extracted.notes = `Provider OCR sedang tidak tersedia (HTTP ${aiResponse.status}). Menunggu konfirmasi manual admin melalui WhatsApp.`;
         }
-      } catch {
-        extracted.notes = "Gambar bukti disimpan. Menunggu verifikasi mutasi riil dari Admin.";
+      } catch (error) {
+        const isTimeout = error instanceof DOMException && error.name === "TimeoutError";
+        extracted.notes = isTimeout
+          ? "Provider OCR tidak merespons dalam batas waktu. Menunggu konfirmasi manual admin melalui WhatsApp."
+          : "Koneksi ke provider OCR gagal. Menunggu konfirmasi manual admin melalui WhatsApp.";
       }
+    } else {
+      extracted.notes = "Provider OCR belum dikonfigurasi. Menunggu konfirmasi manual admin melalui WhatsApp.";
     }
 
-    const validationErrors: string[] = [];
-    let primaryErrorCode: string | null = null;
+    const validationNotes: string[] = [];
 
     const rawAmountDigits = (extracted.amount || "").replace(/[^0-9]/g, "");
     if (rawAmountDigits) {
       const parsedNum = parseInt(rawAmountDigits, 10);
       if (parsedNum !== order.amount) {
-        primaryErrorCode = ERROR_CODES.PAYMENT_AMOUNT_MISMATCH;
         const expectedFormatted = order.amount === 75000 ? "Rp 75.000" : "Rp 20.000";
-        validationErrors.push(`Nominal struk terdeteksi (${extracted.amount}) tidak sesuai dengan nominal tagihan (${expectedFormatted}).`);
+        validationNotes.push(`Nominal struk terdeteksi (${extracted.amount}) tidak sesuai dengan nominal tagihan (${expectedFormatted}).`);
       }
     }
 
     const merchantLower = (extracted.merchant_name || "").toLowerCase();
     const isTargetMerchant = merchantLower.includes("jasa pembuatan websi") || merchantLower.includes("jasa pembuatan") || merchantLower.includes("dokumenku") || merchantLower.includes("andy dadung") || (extracted.nmid && extracted.nmid.includes(EXPECTED_NMID));
     if (merchantLower !== "tidak terdeteksi" && merchantLower !== "" && !isTargetMerchant) {
-      if (!primaryErrorCode) primaryErrorCode = ERROR_CODES.PAYMENT_MERCHANT_MISMATCH;
-      validationErrors.push(`Merchant tujuan terdeteksi '${extracted.merchant_name}' bukan '${EXPECTED_MERCHANT_NAME}'.`);
+      validationNotes.push(`Merchant tujuan terdeteksi '${extracted.merchant_name}' bukan '${EXPECTED_MERCHANT_NAME}'.`);
     }
 
     const dateStr = (extracted.transaction_date || "").trim();
     const currentYear = new Date().getFullYear();
     const hasOldYear = dateStr.includes("2023") || dateStr.includes("2024") || dateStr.includes("2025") || (dateStr.length > 4 && !dateStr.includes(String(currentYear)));
     if (dateStr !== "Tidak terdeteksi" && hasOldYear && !dateStr.includes(String(currentYear))) {
-      if (!primaryErrorCode) primaryErrorCode = ERROR_CODES.PAYMENT_TRANSACTION_DATE_INVALID;
-      validationErrors.push(`Tanggal transaksi pada struk (${extracted.transaction_date}) berada di luar periode tagihan aktif.`);
+      validationNotes.push(`Tanggal transaksi pada struk (${extracted.transaction_date}) berada di luar periode tagihan aktif.`);
     }
 
     if (extracted.transaction_id && extracted.transaction_id !== "Tidak terdeteksi" && extracted.transaction_id.length > 5) {
@@ -215,23 +248,29 @@ Jika gambar buram/bukan struk, isi "extracted_code": "IMAGE_UNREADABLE".`;
       const duplicateVerified = duplicateVerifiedResult.rows[0] as unknown as { order_id: string } | undefined;
 
       if (duplicateOrder || duplicateVerified) {
-        if (!primaryErrorCode) primaryErrorCode = ERROR_CODES.PAYMENT_TRANSACTION_DUPLICATE;
         const conflictId = duplicateOrder?.id || duplicateVerified?.order_id;
-        validationErrors.push(`ID Transaksi (${extracted.transaction_id}) sudah pernah digunakan pada invoice ${conflictId}.`);
+        validationNotes.push(`ID Transaksi (${extracted.transaction_id}) sudah pernah digunakan pada invoice ${conflictId}.`);
       }
     }
 
     const isUnreadable = extracted.extracted_code === "IMAGE_UNREADABLE";
-    const hasMismatch = validationErrors.length > 0 || extracted.extracted_code === "DATA_MISMATCH";
-    const newStatus = isUnreadable ? "OCR_FAILED" : hasMismatch ? "DATA_MISMATCH" : "PENDING_REVIEW";
-    const aiStatus = isUnreadable ? "unreadable" : hasMismatch ? "data_mismatch" : "pending_review";
-    const rawApprovalToken = newStatus === "PENDING_REVIEW" ? generateApprovalToken(6) : null;
+    const hasMismatch = validationNotes.length > 0 || extracted.extracted_code === "DATA_MISMATCH";
+
+    // OCR is informational only. A valid proof image must always be sent to the
+    // admin's WhatsApp review queue; only an admin can approve or reject payment.
+    const newStatus = "PENDING_REVIEW";
+    const aiStatus = hasMismatch || isUnreadable ? "needs_manual_review" : "pending_review";
+    const rawApprovalToken = generateApprovalToken(6);
     const approvalTokenHash = rawApprovalToken ? hashApprovalToken(rawApprovalToken) : null;
     const approvalTokenExpiresAt = rawApprovalToken ? new Date(Date.now() + 10 * 60 * 1000).toISOString() : null;
 
-    const auditSummary = hasMismatch
-      ? `Pre-Validation Gagal: ${validationErrors.join(" • ")}`
-      : `Pre-Validation Lolos: Merchant=${extracted.merchant_name}, Nominal=${extracted.amount}, TrxID=${extracted.transaction_id}, Tanggal=${extracted.transaction_date}, ProofSHA256=${proofSha256?.slice(0, 12)}... Masuk antrean review mutasi riil.`;
+    const aiNotes = [
+      ...validationNotes,
+      ...(isUnreadable ? ["AI tidak dapat membaca gambar dengan jelas."] : []),
+    ];
+    const auditSummary = aiNotes.length > 0
+      ? `Catatan pembacaan AI (bukan keputusan pembayaran): ${aiNotes.join(" • ")} Admin wajib mengonfirmasi pembayaran melalui WhatsApp.`
+      : `Pembacaan AI dicatat sebagai referensi saja: Merchant=${extracted.merchant_name}, Nominal=${extracted.amount}, TrxID=${extracted.transaction_id}, Tanggal=${extracted.transaction_date}, ProofSHA256=${proofSha256?.slice(0, 12)}... Menunggu konfirmasi manual admin melalui WhatsApp.`;
 
     await db.execute({
       sql: `UPDATE orders SET
@@ -268,11 +307,6 @@ Jika gambar buram/bukan struk, isi "extracted_code": "IMAGE_UNREADABLE".`;
       createdAt: now,
     });
 
-    if (hasMismatch || isUnreadable) {
-      const finalCode = isUnreadable ? ERROR_CODES.PROOF_IMAGE_UNREADABLE : (primaryErrorCode || ERROR_CODES.PAYMENT_AMOUNT_MISMATCH);
-      return apiError(finalCode as keyof typeof ERROR_CODES, validationErrors[0] || "Data bukti transfer tidak cocok dengan rincian tagihan.", 400, requestId);
-    }
-
     void notifyAdminViaWhatsApp({
       orderId,
       userEmail: order.user_email,
@@ -285,9 +319,9 @@ Jika gambar buram/bukan struk, isi "extracted_code": "IMAGE_UNREADABLE".`;
     return apiSuccess({
       orderId,
       status: "PENDING_REVIEW",
-      temporaryCredits: 0,
+      isPendingReview: true,
       extracted,
-      message: "Bukti pembayaran berhasil diterima. Status: Menunggu Verifikasi Mutasi. Kredit sementara: +0. Saldo akan ditambahkan setelah verifikasi mutasi riil selesai.",
+      message: "Bukti pembayaran berhasil diterima dan telah dikirim ke admin WhatsApp untuk konfirmasi manual. Hasil pembacaan AI hanya digunakan sebagai referensi dan tidak menolak pesanan.",
     }, 200, requestId);
   } catch (error) {
     return apiError(ERROR_CODES.INTERNAL_SERVER_ERROR, error instanceof Error ? error.message : "Gagal memproses bukti pembayaran.", 500, requestId);

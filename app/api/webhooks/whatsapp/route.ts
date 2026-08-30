@@ -213,6 +213,9 @@ export async function POST(request: NextRequest) {
           orderId,
           actorEmail: `admin-wa-${sender}`,
           provider: "QRIS_MANUAL_WHATSAPP_WEBHOOK",
+          // OCR may misread a transaction ID. Manual WhatsApp approval must be
+          // decided by the admin's payment check, not by that AI extraction.
+          transactionId: `MANUAL-${orderId}-${Date.now()}`,
           token: tokenArg,
           notes: `Disetujui melalui WhatsApp Webhook oleh ${sender}`,
         });

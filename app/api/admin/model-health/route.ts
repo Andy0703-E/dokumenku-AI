@@ -52,7 +52,7 @@ export async function POST(request: NextRequest) {
   const body = await request.json().catch(() => ({}));
   const { modelId, healthStatus, successRate } = body as {
     modelId?: string;
-    healthStatus?: "healthy" | "degraded";
+    healthStatus?: "healthy" | "degraded" | "maintenance";
     successRate?: string;
   };
 

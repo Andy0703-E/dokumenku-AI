@@ -718,7 +718,7 @@ export async function executeAtomicPaymentApproval(
     }
     return {
       ok: false,
-      error: `INVALID_PAYMENT_STATE: Tagihan ${order.id} tidak dapat disetujui karena berstatus '${order.status}'. Hanya tagihan yang lolos pre-validasi (PENDING_REVIEW) yang dapat disetujui.`,
+      error: `INVALID_PAYMENT_STATE: Tagihan ${order.id} tidak dapat disetujui karena berstatus '${order.status}'. Hanya tagihan yang sedang menunggu konfirmasi manual admin (PENDING_REVIEW) yang dapat disetujui.`,
     };
   }
 

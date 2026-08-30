@@ -16,6 +16,7 @@ export interface WaPaymentNotificationPayload {
     transaction_date?: string;
     displayed_payment_status?: string;
     payment_provider?: string;
+    notes?: string;
   };
 }
 

@@ -691,6 +691,7 @@ const server = http.createServer(async (req, res) => {
 • *Tanggal:* ${ocr.transaction_date || "-"}
 • *Provider:* ${ocr.payment_provider || "QRIS"}
 • *Status Struk:* ${ocr.displayed_payment_status || "Berhasil"}
+• *Keterangan OCR:* ${ocr.notes || "Menunggu pembacaan provider"}
 
 ━━━━━━━━━━━━━━━━━━━━━━━
 👉 *CARA APPROVE / TAMBAH KREDIT:*

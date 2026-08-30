@@ -37,7 +37,7 @@ type ModelOption = {
   badge?: string;
   isFlagship?: boolean;
   successRate?: string;
-  healthStatus?: "healthy" | "degraded" | "unknown";
+  healthStatus?: "healthy" | "degraded" | "maintenance" | "unknown";
 };
 
 const QUICK_PROMPTS = [
@@ -77,6 +77,7 @@ export default function StudioWorkbench({
   const [selectedModel, setSelectedModel] = useState("");
   const [isLoadingModels, setIsLoadingModels] = useState(true);
   const [isProviderActive, setIsProviderActive] = useState(false);
+  const [isProviderMaintenance, setIsProviderMaintenance] = useState(false);
   const [providerErrorMsg, setProviderErrorMsg] = useState("");
   const [creditStatus, setCreditStatus] = useState("Memeriksa status kredit...");
   const [isUserPro, setIsUserPro] = useState(false);
@@ -121,6 +122,7 @@ export default function StudioWorkbench({
         data?: ModelOption[];
         isPro?: boolean;
         error?: string;
+        providerStatus?: "maintenance";
       };
       if (response.ok && payload.data && payload.data.length > 0) {
         const userPro = Boolean(payload.isPro);
@@ -140,9 +142,11 @@ export default function StudioWorkbench({
 
         setSelectedModel(defaultModel ?? "");
         setIsProviderActive(true);
+        setIsProviderMaintenance(false);
         setProviderErrorMsg("");
       } else {
         setIsProviderActive(false);
+        setIsProviderMaintenance(payload.providerStatus === "maintenance");
         setAvailableModels([]);
         setSelectedModel("");
         setProviderErrorMsg(
@@ -152,6 +156,7 @@ export default function StudioWorkbench({
       }
     } catch {
       setIsProviderActive(false);
+      setIsProviderMaintenance(false);
       setAvailableModels([]);
       setSelectedModel("");
       setProviderErrorMsg(
@@ -333,6 +338,8 @@ export default function StudioWorkbench({
                 ? "Menyusun Dokumen..."
                 : isProviderActive
                   ? "Studio Siap"
+                  : isProviderMaintenance
+                    ? "Provider Maintenance"
                   : "Layanan Belum Aktif"}
             </span>
           </div>
@@ -404,7 +411,11 @@ export default function StudioWorkbench({
                       );
                       return;
                     }
-                    if (m?.healthStatus === "degraded") {
+                    if (m?.healthStatus === "maintenance") {
+                      toast.warning(
+                        `Model '${m.name}' sedang dalam maintenance di provider. Silakan pilih model yang aktif atau coba kembali setelah pemeliharaan selesai.`,
+                      );
+                    } else if (m?.healthStatus === "degraded") {
                       toast.warning(
                         `⚠️ Provider upstream mencatat model '${m.name}' sedang mengalami gangguan (0% success). Disarankan beralih ke 'deepseek-v4-flash-0731' (Starter) atau 'glm-5.3' (Pro).`,
                       );
@@ -429,7 +440,7 @@ export default function StudioWorkbench({
                             </option>
                           ))}
                       </optgroup>
-                      <optgroup label="⚠️ Model Offline / Gangguan di Provider (0% Down)">
+                      <optgroup label="⚠️ Model Maintenance / Gangguan di Provider">
                         {availableModels
                           .filter((m) => m.healthStatus !== "healthy")
                           .map((m) => (
@@ -438,7 +449,7 @@ export default function StudioWorkbench({
                               value={m.id}
                               disabled={true}
                             >
-                              ⚠️ {m.name} (Offline di Provider Upstream)
+                              ⚠️ {m.name} ({m.healthStatus === "maintenance" ? "Maintenance Provider" : "Offline di Provider Upstream"})
                             </option>
                           ))}
                       </optgroup>
@@ -451,7 +462,14 @@ export default function StudioWorkbench({
               </div>
 
               {isProviderActive ? (
-                availableModels.find((m) => m.id === selectedModel)?.healthStatus === "degraded" ? (
+                availableModels.find((m) => m.id === selectedModel)?.healthStatus === "maintenance" ? (
+                  <div className="provider-alert-amber" style={{ marginTop: "4px" }} role="alert">
+                    <AlertTriangle size={15} style={{ flexShrink: 0, marginTop: "1px" }} />
+                    <span>
+                      Model ini sedang dalam <strong>maintenance provider</strong>. Pembuatan dokumen sementara tidak tersedia; silakan pilih model aktif atau coba kembali setelah pemeliharaan selesai.
+                    </span>
+                  </div>
+                ) : availableModels.find((m) => m.id === selectedModel)?.healthStatus === "degraded" ? (
                   <div className="provider-alert-amber" style={{ marginTop: "4px" }} role="alert">
                     <AlertTriangle size={15} style={{ flexShrink: 0, marginTop: "1px" }} />
                     <span>

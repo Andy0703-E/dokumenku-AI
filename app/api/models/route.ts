@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { getCurrentUser } from "@/lib/auth";
 import { getDatabase } from "@/db";
 import { classifyModel, getCachedModels, setCachedModels, type ModelItem } from "@/lib/models-config";
+import { isProviderMaintenance, PROVIDER_MAINTENANCE_MESSAGE } from "@/lib/provider-maintenance";
 import { bootstrapModelHealth } from "@/app/api/admin/model-health/route";
 
 const PROVIDER_BASE_URL = "https://bandelbanget.xyz/v1";
@@ -49,7 +50,23 @@ export async function GET() {
     const upstreamResponse = await fetch(`${PROVIDER_BASE_URL}/models`, {
       headers: { Authorization: `Bearer ${apiKey}` },
     });
-    const payload = await upstreamResponse.json();
+    const responseText = await upstreamResponse.text();
+
+    if (!upstreamResponse.ok) {
+      if (isProviderMaintenance(upstreamResponse.status, responseText)) {
+        return NextResponse.json(
+          { error: PROVIDER_MAINTENANCE_MESSAGE, providerStatus: "maintenance" },
+          { status: 503 },
+        );
+      }
+
+      return NextResponse.json(
+        { error: "Daftar model dari provider AI sedang tidak dapat dimuat. Silakan coba lagi beberapa saat lagi." },
+        { status: upstreamResponse.status },
+      );
+    }
+
+    const payload = JSON.parse(responseText) as { data?: unknown };
 
     if (payload && Array.isArray(payload.data)) {
       const classifiedList: ModelItem[] = payload.data

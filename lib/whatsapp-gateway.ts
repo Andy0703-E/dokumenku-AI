@@ -17,6 +17,7 @@ export interface WhatsAppNotificationParams {
     payment_provider?: string;
     nmid?: string;
     displayed_payment_status?: string;
+    notes?: string;
   };
 }
 
@@ -149,10 +150,14 @@ export async function notifyAdminNewProofUpload(
 • *Tanggal:* ${ocr.transaction_date || "-"}
 • *Provider:* ${ocr.payment_provider || "QRIS"}
 • *Status Struk:* ${ocr.displayed_payment_status || "Berhasil"}
+• *Keterangan OCR:* ${ocr.notes || "Menunggu pembacaan provider"}
 
 ━━━━━━━━━━━━━━━━━━━━━━━
 👉 *CARA APPROVE / TAMBAH KREDIT:*
 Balas chat ini dengan mengetik:
+*ACC ${params.orderId}*
+
+Token dapat digunakan sebagai opsi tambahan bila diperlukan:
 *ACC ${params.orderId} ${params.approvalToken}*
 
 👉 *CARA TOLAK:*

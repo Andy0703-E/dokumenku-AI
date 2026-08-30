@@ -250,25 +250,26 @@ export default function PricingPage() {
       });
       const payload = (await res.json()) as {
         ok?: boolean;
-        isPendingReview?: boolean;
-        message?: string;
         error?: string;
-        extracted?: {
-          merchant_name?: string;
-          nmid?: string;
-          amount?: string;
-          transaction_id?: string;
-          transaction_date?: string;
-          payment_provider?: string;
+        data?: {
+          isPendingReview?: boolean;
+          message?: string;
+          extracted?: {
+            merchant_name?: string;
+            nmid?: string;
+            amount?: string;
+            transaction_id?: string;
+            transaction_date?: string;
+            payment_provider?: string;
+          };
         };
-        validationErrors?: string[];
       };
-      if (res.ok && payload.isPendingReview) {
-        setExtractedOcr(payload.extracted || null);
+      if (res.ok && payload.data?.isPendingReview) {
+        setExtractedOcr(payload.data.extracted || null);
         setIsSubmittedForReview(true);
-        toast.success("Bukti transfer berhasil dikirim! Menunggu konfirmasi verifikasi admin.");
+        toast.success("Bukti transfer berhasil dikirim. Admin akan mengonfirmasi pembayaran melalui WhatsApp.");
       } else {
-        const errMsg = payload.error || "Bukti pembayaran tidak sesuai dengan rincian tagihan QRIS Dokumenku AI.";
+        const errMsg = payload.error || "Bukti pembayaran belum dapat diunggah. Pastikan file gambar valid.";
         setAiErrorMsg(errMsg);
         toast.error(`Verifikasi Gagal: ${errMsg}`);
       }
@@ -582,7 +583,7 @@ export default function PricingPage() {
                   Bukti Pembayaran Berhasil Diterima
                 </h3>
                 <p style={{ fontSize: "0.86rem", color: "var(--text-muted)", margin: "0 auto 12px", maxWidth: "520px", lineHeight: "1.55" }}>
-                  Status: <strong>Menunggu Verifikasi</strong>. Bukti Anda sedang diperiksa. Kredit belum ditambahkan selama pembayaran belum dikonfirmasi melalui mutasi pembayaran.
+                  Status: <strong>Menunggu Konfirmasi Admin</strong>. Bukti Anda telah diteruskan ke admin melalui WhatsApp. Hasil AI hanya menjadi referensi; kredit ditambahkan setelah admin mengonfirmasi pembayaran.
                 </p>
                 <div
                   style={{

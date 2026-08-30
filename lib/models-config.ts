@@ -1,5 +1,5 @@
 export type ModelTier = "starter" | "pro";
-export type ModelHealthStatus = "healthy" | "degraded" | "unknown";
+export type ModelHealthStatus = "healthy" | "degraded" | "maintenance" | "unknown";
 
 export type ModelItem = {
   id: string;
