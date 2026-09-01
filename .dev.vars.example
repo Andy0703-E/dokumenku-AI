@@ -1,5 +1,7 @@
-BANDELBANGET_API_KEY=
+INVIBUILDER_API_KEY=
+INVIBUILDER_BASE_URL=https://api.invibuilder.com/api/v1
 ADMIN_EMAIL=admin@example.com
 ADMIN_PASSWORD=ganti-dengan-kata-sandi-admin-yang-kuat
 APP_SESSION_SECRET=ganti-dengan-random-string-panjang-minimal-32-karakter
 INITIAL_CREDITS=3
+
