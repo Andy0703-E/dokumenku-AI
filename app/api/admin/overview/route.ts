@@ -1,9 +1,9 @@
 import { NextResponse } from "next/server";
 import { getDatabase } from "@/db";
 import { getCurrentAdmin } from "@/lib/auth";
-import { classifyModel, getCachedModels, setCachedModels, type ModelItem } from "@/lib/models-config";
-
-const PROVIDER_BASE_URL = "https://bandelbanget.xyz/v1";
+import { classifyModel, getCachedModels, setCachedModels, type ModelItem, HARDCODED_MODELS } from "@/lib/models-config";
+import { getConfiguredAiProviders } from "@/lib/ai-provider-pool";
+import { fetchInvibuilderQuota } from "@/lib/invibuilder-quota";
 
 export async function GET() {
   if (!(await getCurrentAdmin())) {
@@ -27,29 +27,39 @@ export async function GET() {
     const auditLogsResult = await db.execute("SELECT id, order_id AS orderId, action, actor_email AS actorEmail, provider, transaction_id AS transactionId, amount, credits_granted AS creditsGranted, status_before AS statusBefore, status_after AS statusAfter, notes, created_at AS createdAt FROM audit_logs ORDER BY id DESC LIMIT 50");
     const auditLogs = auditLogsResult.rows as unknown as Array<{ id: number; orderId: string; action: string; actorEmail: string; provider?: string; transactionId?: string; amount: number; creditsGranted: number; statusBefore: string; statusAfter: string; notes?: string; createdAt: string }>;
 
-    const apiKey = process.env.BANDELBANGET_API_KEY;
+    const providers = getConfiguredAiProviders();
+    const primaryProvider = providers[0];
+    const apiKey = primaryProvider?.apiKey;
     const totalDocs = generationCount?.value ?? 0;
     const estimatedTokens = totalDocs * 12500;
     const estimatedCostUsd = ((estimatedTokens / 1000) * 0.0015).toFixed(3);
 
     const providerInfo = {
       status: apiKey ? "connected" : "disconnected",
-      providerName: "BandelAI Provider Proxy",
-      providerUrl: PROVIDER_BASE_URL,
+      providerName: providers.length > 1 ? `AI Gateway Pool (${providers.length} provider)` : primaryProvider?.name || "AI Gateway",
+      providerUrl: providers.map((provider) => provider.baseUrl).join(" • ") || "Belum Dikonfigurasi",
       apiKeyMasked: apiKey ? `${apiKey.slice(0, 10)}...${apiKey.slice(-4)}` : "Belum Dikonfigurasi",
       modelCount: 0,
-      balanceText: apiKey ? "Aktif • Kuota Siap Digunakan" : "Tidak Aktif",
+      balanceText: apiKey ? `${providers.length > 1 ? "Failover aktif" : "Aktif"} • Kuota Siap Digunakan` : "Tidak Aktif",
       estimatedTokensUsed: estimatedTokens,
       estimatedCostUsd: `$${estimatedCostUsd} USD`,
       avgTokensPerBlueprint: "12.500 Token",
-      models: [] as Array<{ id: string; name: string; isFlagship: boolean; tier: string }>,
+      models: [] as Array<{ id: string; name: string; isFlagship: boolean; tier: string; healthStatus?: string; availabilityLabel?: string; statusSource?: string; providerGrade?: string }>,
     };
 
-    if (apiKey) {
+    if (apiKey && primaryProvider) {
       const cached = getCachedModels();
       if (cached) {
-        providerInfo.modelCount = cached.length;
-        providerInfo.models = cached.map((m) => ({
+        // Deduplicate by ID using Map and add hardcoded models
+        const modelsMap = new Map(cached.map((m) => [m.id, m]));
+        for (const hm of HARDCODED_MODELS) {
+          if (!modelsMap.has(hm.id)) {
+            modelsMap.set(hm.id, classifyModel(hm.id, hm.name, { enabled: true }));
+          }
+        }
+        const allModels = [...modelsMap.values()];
+        providerInfo.modelCount = allModels.length;
+        providerInfo.models = allModels.map((m) => ({
           id: m.id,
           name: m.name,
           isFlagship: m.isFlagship,
@@ -61,7 +71,7 @@ export async function GET() {
         }));
       } else {
         try {
-          const modelsRes = await fetch(`${PROVIDER_BASE_URL}/models`, {
+          const modelsRes = await fetch(`${primaryProvider.baseUrl}/models`, {
             headers: { Authorization: `Bearer ${apiKey}` },
           });
           if (modelsRes.ok) {
@@ -72,15 +82,24 @@ export async function GET() {
                   const id = m.id ?? "";
                   const name = m.name || m.display_name || id;
                   return classifyModel(id, name, {
-                    enabled: m.enabled,
+                    enabled: m.enabled ?? true,
                     grade: m.grade,
                     vision: m.vision,
                   });
                 },
               );
               setCachedModels(classified);
-              providerInfo.modelCount = classified.length;
-              providerInfo.models = classified.map((m) => ({
+              // Deduplicate by ID using Map
+              const modelsMap = new Map(classified.map((m) => [m.id, m]));
+              // Add hardcoded models
+              for (const hm of HARDCODED_MODELS) {
+                if (!modelsMap.has(hm.id)) {
+                  modelsMap.set(hm.id, classifyModel(hm.id, hm.name, { enabled: true }));
+                }
+              }
+              const dedupedModels = [...modelsMap.values()];
+              providerInfo.modelCount = dedupedModels.length;
+              providerInfo.models = dedupedModels.map((m) => ({
                 id: m.id,
                 name: m.name,
                 isFlagship: m.isFlagship,
@@ -98,6 +117,15 @@ export async function GET() {
       }
     }
 
+    // Fetch Invibuilder quota only for invibuilder provider
+    const invibuilderProviders = providers.filter((p) => p.id === "invibuilder");
+    const quotaResults = await Promise.all(
+      invibuilderProviders.map(async (p) => {
+        const result = await fetchInvibuilderQuota(p.baseUrl, p.apiKey);
+        return { provider: p.name, ...result };
+      }),
+    );
+
     return NextResponse.json({
       summary: {
         users: userCount?.value ?? 0,
@@ -105,6 +133,7 @@ export async function GET() {
         completedDocuments: totalDocs,
       },
       providerInfo,
+      providerQuota: quotaResults,
       users,
       transactions,
       orders,

@@ -1,9 +1,13 @@
 import { NextRequest } from "next/server";
 import {
   getDatabase,
+  reconcileTerminalProviderAttempts,
   releaseCredits,
+  settleGenerationCredits,
+  updateGenerationTelemetry,
 } from "@/db";
 import { getCurrentUser } from "@/lib/auth";
+import { terminalDraftTelemetry } from "@/lib/generation-telemetry";
 import {
   ERROR_CODES,
   apiError,
@@ -19,11 +23,13 @@ export async function POST(request: NextRequest) {
     completed,
     documentType = "PRD",
     failureReason,
+    preserveDraft = false,
   } = (await request.json().catch(() => ({}))) as unknown as {
     generationId?: string;
     completed?: boolean;
     documentType?: "PRD" | "TECH_SPEC" | "UI_UX" | "AI_CONTEXT" | "ALL_DONE";
     failureReason?: string;
+    preserveDraft?: boolean;
   };
 
   if (!generationId || typeof generationId !== "string") {
@@ -35,7 +41,7 @@ export async function POST(request: NextRequest) {
       const db = await getDatabase();
       const now = new Date().toISOString();
       const ownedGeneration = await db.execute({
-        sql: "SELECT id FROM document_generations WHERE id = ? AND LOWER(user_email) = LOWER(?)",
+        sql: "SELECT id, status, project_id FROM document_generations WHERE id = ? AND LOWER(user_email) = LOWER(?)",
         args: [generationId, user.email],
       });
       if (!ownedGeneration.rows[0]) {
@@ -65,11 +71,69 @@ export async function POST(request: NextRequest) {
 
       // ── Failure: release credits ────────────────────────────────
       if (failureReason) {
-        await releaseCredits(db, { generationId, reason: failureReason });
+        const generation = ownedGeneration.rows[0] as { status?: string; project_id?: string };
+        if (preserveDraft && generation.project_id) {
+          const draftCount = await db.execute({
+            sql: `SELECT COUNT(*) AS count FROM project_documents
+              WHERE LOWER(user_email) = LOWER(?) AND project_id = ?
+                AND status = 'DRAFT' AND LENGTH(TRIM(content)) > 0`,
+            args: [user.email, generation.project_id],
+          });
+          const draftBlueprint = await db.execute({
+            sql: `SELECT 1 FROM project_blueprints
+              WHERE LOWER(user_email) = LOWER(?) AND project_id = ? AND generation_id = ? AND quality_status = 'FAILED'`,
+            args: [user.email, generation.project_id, generationId],
+          });
+          if (Number(draftCount.rows[0]?.count ?? 0) === 4 && draftBlueprint.rows[0]) {
+            const settled = await settleGenerationCredits(db, { generationId, userEmail: user.email });
+            if (settled.ok) {
+              await db.execute({
+                sql: "UPDATE document_generations SET status = 'DRAFT_READY', completed_at = ? WHERE id = ? AND LOWER(user_email) = LOWER(?)",
+                args: [now, generationId, user.email],
+              });
+              await reconcileTerminalProviderAttempts(db, generationId);
+              // Server-authoritative telemetry update
+              await updateGenerationTelemetry(db, generationId, {
+                ...terminalDraftTelemetry(now),
+              }, user.email).catch((e) => {
+                console.error(`[TELEMETRY_WRITE_FAILED] gen=${generationId} fn=finish-draftReady error=${e instanceof Error ? e.message : String(e)}`);
+              });
+              return apiSuccess({
+                status: "DRAFT_READY",
+                generationId,
+                refunded: false,
+                credits: settled.availableCredits ?? 0,
+                message: "Empat dokumen sudah tersimpan sebagai draf. Kredit digunakan satu kali dan draf tetap dapat diunduh atau direvisi.",
+              }, 200, requestId);
+            }
+          }
+        }
+
+        const releaseResult = await releaseCredits(db, { generationId, reason: failureReason });
+        if (!releaseResult.ok && releaseResult.error === "CREDIT_RESERVATION_INVALID_STATE") {
+          return apiSuccess({
+            status: generation.status === "DRAFT_READY" ? "DRAFT_READY" : "SETTLED",
+            generationId,
+            refunded: false,
+            message: "Dokumen atau kredit telah diselesaikan sebelumnya; tidak ada kredit tambahan yang dikembalikan.",
+          }, 200, requestId);
+        }
+        if (!releaseResult.ok) {
+          return apiError(ERROR_CODES.CREDIT_RESERVATION_INVALID_STATE, "Reservasi kredit belum dapat diselesaikan. Silakan coba lagi; kredit tetap aman.", 409, requestId);
+        }
 
         await db.execute({
           sql: "UPDATE document_generations SET status = 'FAILED', completed_at = ? WHERE id = ? AND user_email = ?",
           args: [now, generationId, user.email],
+        });
+        await reconcileTerminalProviderAttempts(db, generationId);
+
+        // Server-authoritative telemetry update
+        await updateGenerationTelemetry(db, generationId, {
+          creditResult: "RELEASED",
+          finalStatus: "FAILED",
+        }, user.email).catch((e) => {
+          console.error(`[TELEMETRY_WRITE_FAILED] gen=${generationId} fn=finish-released error=${e instanceof Error ? e.message : String(e)}`);
         });
 
         const userRowResult = await db.execute({

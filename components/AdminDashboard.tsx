@@ -36,6 +36,25 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 
+type ProviderQuota = {
+  provider: string;
+  ok: boolean;
+  quota?: {
+    limit: number;
+    usage: number;
+    remaining: number;
+    resetAt?: string;
+    formattedRemaining?: string;
+    planName?: string;
+    activeUntil?: string;
+    daysUntilExpiry?: number;
+    isActive?: boolean;
+    rateLimitRpm?: number;
+    rateLimitRemaining?: number;
+  };
+  error?: string;
+};
+
 type Overview = {
   summary: { users: number; credits: number; completedDocuments: number };
   providerInfo?: {
@@ -59,6 +78,7 @@ type Overview = {
       providerGrade?: string;
     }>;
   };
+  providerQuota?: ProviderQuota[];
   users: Array<{ email: string; credits: number; updatedAt: string }>;
   transactions: Array<{
     id: number;
@@ -743,7 +763,7 @@ export default function AdminDashboard() {
                   Provider Upstream
                 </span>
                 <strong style={{ fontSize: "0.82rem", color: "var(--navy)" }}>
-                  bandelbanget.xyz (Proxy)
+                  {data.providerInfo?.providerUrl || "Belum Dikonfigurasi"}
                 </strong>
               </div>
 
@@ -760,9 +780,57 @@ export default function AdminDashboard() {
                 <span style={{ fontSize: "0.72rem", color: "var(--text-muted)", display: "block", marginBottom: "2px" }}>
                   Status Kuota Saldo API
                 </span>
-                <strong style={{ fontSize: "0.82rem", color: "#059669" }}>
-                  {data.providerInfo?.balanceText || "Aktif • Kuota Siap"}
-                </strong>
+                {data.providerQuota && data.providerQuota.length > 0 ? (
+                  <div style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
+                    {data.providerQuota.map((q) => {
+                      if (!q.ok) {
+                        return (
+                          <div key={q.provider} style={{ display: "flex", alignItems: "center", gap: "6px" }}>
+                            <span style={{ width: "6px", height: "6px", borderRadius: "50%", background: "#9CA3AF", flexShrink: 0 }} />
+                            <strong style={{ fontSize: "0.78rem", color: "#9CA3AF" }}>
+                              {q.error || "N/A"}
+                            </strong>
+                          </div>
+                        );
+                      }
+                      if (!q.quota) return null;
+                      const pct = q.quota.limit > 0 ? Math.round((q.quota.usage / q.quota.limit) * 100) : 0;
+                      const colour = pct >= 90 ? "#DC2626" : pct >= 70 ? "#D97706" : "#059669";
+                      return (
+                        <div key={q.provider} style={{ display: "flex", flexDirection: "column", gap: "3px" }}>
+                          <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
+                            <span style={{ width: "6px", height: "6px", borderRadius: "50%", background: q.quota.isActive ? colour : "#9CA3AF", flexShrink: 0 }} />
+                            <strong style={{ fontSize: "0.78rem", color: "var(--navy)" }}>
+                              {q.quota.formattedRemaining || q.quota.remaining.toLocaleString("id-ID")} token tersisa
+                            </strong>
+                            {q.quota.limit > 0 && (
+                              <span style={{ fontSize: "0.68rem", color: colour, fontWeight: 700 }}>
+                                ({pct}% terpakai)
+                              </span>
+                            )}
+                          </div>
+                          <div style={{ display: "flex", gap: "8px", fontSize: "0.68rem", color: "var(--text-muted)", paddingLeft: "12px" }}>
+                            {q.quota.planName && <span>Plan: <strong>{q.quota.planName}</strong></span>}
+                            {q.quota.daysUntilExpiry != null && (
+                              <span>
+                                {q.quota.daysUntilExpiry > 0
+                                  ? `Aktif ${q.quota.daysUntilExpiry} hari lagi`
+                                  : "⚠️ Sudah kedaluwarsa"}
+                              </span>
+                            )}
+                            {q.quota.rateLimitRpm != null && (
+                              <span>RPM: {q.quota.rateLimitRemaining}/{q.quota.rateLimitRpm}</span>
+                            )}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                ) : (
+                  <strong style={{ fontSize: "0.82rem", color: "#059669" }}>
+                    {data.providerInfo?.balanceText || "Aktif • Kuota Siap"}
+                  </strong>
+                )}
               </div>
             </div>
           </section>
@@ -1648,7 +1716,7 @@ export default function AdminDashboard() {
                     Daftar Model AI Terkoneksi ({data.providerInfo.models.length} Model)
                   </strong>
                   <span style={{ fontSize: "0.76rem", color: "var(--text-muted)" }}>
-                    Provider: bandelbanget.xyz • API Key Aktif
+                    Provider: {data.providerInfo?.providerUrl?.split("•")[0]?.trim() || "AI Gateway"} • API Key Aktif
                   </span>
                 </div>
               </div>

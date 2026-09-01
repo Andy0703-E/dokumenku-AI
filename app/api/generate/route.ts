@@ -1,8 +1,13 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getDatabase } from "@/db";
+import { getDatabase, storeProviderAttempt, updateProviderAttemptResult, classifyFallbackReason } from "@/db";
 import { getCurrentUser } from "@/lib/auth";
 import { isFlagshipModel, isAutoModel, getCachedModels, setCachedModels, classifyModel, type ModelItem } from "@/lib/models-config";
 import { isProviderMaintenance, PROVIDER_MAINTENANCE_MESSAGE } from "@/lib/provider-maintenance";
+import {
+  getConfiguredAiProviders,
+  shouldFailOverProvider,
+  type AiProvider,
+} from "@/lib/ai-provider-pool";
 import {
   type GenerationStage,
   resolveModelForStage,
@@ -10,48 +15,64 @@ import {
   getAdminRoutingOverrides,
 } from "@/lib/model-router";
 
-const PROVIDER_BASE_URL = "https://bandelbanget.xyz/v1";
 const MAX_AUTO_FALLBACK_ATTEMPTS = 3;
 
 /**
  * Fetch available models from provider, using cache if available.
  * Falls back to direct provider call if cache is empty.
  */
-async function ensureAvailableModels(apiKey: string): Promise<ModelItem[]> {
+async function ensureAvailableModels(providers: AiProvider[]): Promise<ModelItem[]> {
   const cached = getCachedModels();
   if (cached && cached.length > 0) return cached;
 
-  try {
-    const upstreamResponse = await fetch(`${PROVIDER_BASE_URL}/models`, {
-      headers: { Authorization: `Bearer ${apiKey}` },
-    });
-    if (!upstreamResponse.ok) return [];
-
-    const payload = await upstreamResponse.json() as { data?: unknown };
-    if (!payload || !Array.isArray(payload.data)) return [];
-
-    const models: ModelItem[] = payload.data
-      .filter((m: { id?: string }) => {
-        const id = (m.id ?? "").trim().toLowerCase();
-        return id && id !== "auto" && id !== "auto-debug" && id !== "hy3";
-      })
-      .map((m: { id?: string; name?: string; display_name?: string; enabled?: boolean; grade?: string; vision?: boolean }) => {
-        const id = m.id ?? "";
-        const name = m.name || m.display_name || id;
-        return classifyModel(id, name, {
-          enabled: m.enabled,
-          grade: m.grade,
-          vision: m.vision,
-        });
+  const results = await Promise.all(providers.map(async (provider) => {
+    try {
+      const upstreamResponse = await fetch(`${provider.baseUrl}/models`, {
+        headers: { Authorization: `Bearer ${provider.apiKey}` },
       });
-
-    if (models.length > 0) {
-      setCachedModels(models);
+      if (!upstreamResponse.ok) return [] as ModelItem[];
+      const payload = await upstreamResponse.json() as { data?: unknown };
+      if (!payload || !Array.isArray(payload.data)) return [] as ModelItem[];
+      return payload.data
+        .filter((m: { id?: string }) => {
+          const id = (m.id ?? "").trim().toLowerCase();
+          return id && id !== "auto" && id !== "auto-debug" && id !== "hy3";
+        })
+        .map((m: { id?: string; name?: string; display_name?: string; enabled?: boolean; grade?: string; vision?: boolean }) => {
+          const id = m.id ?? "";
+          return classifyModel(id, m.name || m.display_name || id, {
+            enabled: m.enabled ?? true,
+            grade: m.grade,
+            vision: m.vision,
+          });
+        });
+    } catch {
+      return [] as ModelItem[];
     }
-    return models;
-  } catch {
-    return [];
+  }));
+
+  const models = [...new Map(results.flat().map((model) => [model.id, model])).values()];
+
+  // Inject hardcoded promo models so the router can select them
+  const { HARDCODED_MODELS } = await import("@/lib/models-config");
+  for (const hm of HARDCODED_MODELS) {
+    if (!models.find((m) => m.id === hm.id)) {
+      models.push({
+        id: hm.id,
+        name: hm.name,
+        tier: hm.tier,
+        badge: "Promo",
+        isFlagship: false,
+        healthStatus: "healthy",
+        availabilityLabel: "Tersedia",
+        statusSource: "admin" as const,
+        supportsVision: false,
+      });
+    }
   }
+
+  if (models.length > 0) setCachedModels(models);
+  return models;
 }
 
 /**
@@ -63,43 +84,48 @@ async function attemptUpstreamCall(
   systemPrompt: string,
   userContent: string,
   maxOutputTokens: number,
-  apiKey: string,
-): Promise<{ response: Response; latencyMs: number } | { error: string; status: number }> {
+  providers: AiProvider[],
+): Promise<{ response: Response; latencyMs: number; provider: AiProvider } | { error: string; status: number }> {
   const start = Date.now();
-  let upstreamResponse: Response;
-  try {
-    upstreamResponse = await fetch(`${PROVIDER_BASE_URL}/chat/completions`, {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${apiKey}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        model: modelId,
-        stream: true,
-        temperature: 0.25,
-        max_tokens: maxOutputTokens,
-        messages: [
-          { role: "system", content: systemPrompt },
-          { role: "user", content: userContent },
-        ],
-      }),
-    });
-  } catch {
-    return { error: "Tidak dapat terhubung ke bandelbanget.xyz. Coba beberapa saat lagi.", status: 502 };
-  }
+  let lastError = "Provider AI tidak dapat dihubungi.";
+  let lastStatus = 502;
 
-  const latencyMs = Date.now() - start;
+  for (const provider of providers) {
+    try {
+      const upstreamResponse = await fetch(`${provider.baseUrl}/chat/completions`, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${provider.apiKey}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          model: modelId,
+          stream: true,
+          temperature: 0.25,
+          max_tokens: maxOutputTokens,
+          messages: [
+            { role: "system", content: systemPrompt },
+            { role: "user", content: userContent },
+          ],
+        }),
+      });
+      if (upstreamResponse.ok) {
+        return { response: upstreamResponse, latencyMs: Date.now() - start, provider };
+      }
 
-  if (!upstreamResponse.ok) {
-    const errorPayload = await upstreamResponse.text();
-    if (isProviderMaintenance(upstreamResponse.status, errorPayload)) {
-      return { error: PROVIDER_MAINTENANCE_MESSAGE, status: 503 };
+      const errorPayload = await upstreamResponse.text();
+      lastStatus = upstreamResponse.status;
+      lastError = isProviderMaintenance(upstreamResponse.status, errorPayload)
+        ? PROVIDER_MAINTENANCE_MESSAGE
+        : errorPayload || `${provider.name} merespons HTTP ${upstreamResponse.status}.`;
+      if (!shouldFailOverProvider(upstreamResponse.status)) break;
+    } catch {
+      lastStatus = 502;
+      lastError = `${provider.name} tidak dapat dihubungi.`;
     }
-    return { error: errorPayload || `Provider merespons HTTP ${upstreamResponse.status}.`, status: upstreamResponse.status };
   }
 
-  return { response: upstreamResponse, latencyMs };
+  return { error: lastError, status: lastStatus };
 }
 
 /**
@@ -123,7 +149,7 @@ function isRetriableError(status: number, errorBody: string): boolean {
 /**
  * Wrap a non-streaming response into SSE format.
  */
-function wrapJsonAsSSE(result: unknown): NextResponse {
+function wrapJsonAsSSE(result: unknown, metadata: Record<string, string> = {}): NextResponse {
   const stream = new ReadableStream({
     start(controller) {
       const encoder = new TextEncoder();
@@ -132,9 +158,11 @@ function wrapJsonAsSSE(result: unknown): NextResponse {
       controller.close();
     },
   });
+  const headers = new Headers({ "Content-Type": "text/event-stream", "Cache-Control": "no-cache", Connection: "keep-alive", "X-Accel-Buffering": "no" });
+  for (const [key, value] of Object.entries(metadata)) headers.set(key, value);
   return new NextResponse(stream, {
     status: 200,
-    headers: { "Content-Type": "text/event-stream", "Cache-Control": "no-cache", Connection: "keep-alive", "X-Accel-Buffering": "no" },
+    headers,
   });
 }
 
@@ -155,9 +183,15 @@ export async function POST(request: NextRequest) {
     maxOutputTokens?: number;
     stage?: string;
   };
-  const apiKey = process.env.BANDELBANGET_API_KEY;
+  if (generationId?.startsWith("rev-")) {
+    return NextResponse.json(
+      { error: "Revisi AI sudah tidak tersedia. Gunakan Edit Manual untuk memperbarui dokumen." },
+      { status: 410 },
+    );
+  }
 
-  if (!apiKey || !selectedModel || !userContent || !systemPrompt) {
+  const configuredProviders = getConfiguredAiProviders();
+  if (configuredProviders.length === 0 || !selectedModel || !userContent || !systemPrompt) {
     return NextResponse.json(
       { error: "Layanan belum aktif. Admin perlu menyelesaikan konfigurasi provider terlebih dahulu." },
       { status: 503 },
@@ -167,16 +201,17 @@ export async function POST(request: NextRequest) {
   if (!generationId) {
     return NextResponse.json({ error: "Sesi pembuatan dokumen tidak valid." }, { status: 401 });
   }
-
   const user = await getCurrentUser();
-  const isRevision = typeof generationId === "string" && generationId.startsWith("rev-");
   const isAuto = isAutoModel(selectedModel);
   const modelId = selectedModel.trim();
+  // Independent document stages rotate across the configured gateways in
+  // balanced mode, while each stage keeps a stable preferred provider.
+  const providerOrder = configuredProviders;
 
   // ── Authorization for non-auto mode ──────────────────────────────────
   if (!isAuto) {
     const isFlagship = isFlagshipModel(modelId);
-    if (!isRevision && user) {
+    if (user) {
       try {
         const db = await getDatabase();
         const generationResult = await db.execute({
@@ -202,20 +237,7 @@ export async function POST(request: NextRequest) {
       } catch (error) {
         return NextResponse.json({ error: error instanceof Error ? error.message : "Pembuatan dokumen tidak dapat diverifikasi." }, { status: 503 });
       }
-    } else if (isRevision && user && isFlagship && user.role !== "admin") {
-      try {
-        const db = await getDatabase();
-        const purchasedResult = await db.execute({
-          sql: "SELECT 1 FROM credit_transactions WHERE user_email = ? AND amount > 3 AND reason != 'Kredit awal akun baru' LIMIT 1",
-          args: [user.email],
-        });
-        if (!purchasedResult.rows[0]) {
-          return NextResponse.json({ error: "Model Flagship hanya tersedia untuk akun yang telah membeli paket Pro." }, { status: 403 });
-        }
-      } catch {
-        // ignore
-      }
-    } else if (!user && isFlagship) {
+    } else if (isFlagship) {
       return NextResponse.json({ error: "Model Flagship hanya tersedia untuk akun Pro Studio." }, { status: 403 });
     }
   }
@@ -225,7 +247,7 @@ export async function POST(request: NextRequest) {
     const resolvedStage = (stage || "blueprint") as GenerationStage;
 
     // Validate and update generation status to GENERATING
-    if (!isRevision && user) {
+    if (user) {
       try {
         const db = await getDatabase();
         const generationResult = await db.execute({
@@ -239,12 +261,12 @@ export async function POST(request: NextRequest) {
         if (generation.status !== "GENERATING") {
           await db.execute({ sql: "UPDATE document_generations SET status = 'GENERATING' WHERE id = ?", args: [generationId] });
         }
-      } catch (error) {
-        return NextResponse.json({ error: error instanceof Error ? error.message : "Pembuatan dokumen tidak dapat diverifikasi." }, { status: 503 });
+      } catch {
+        return NextResponse.json({ error: "Gagal memverifikasi sesi pembuatan dokumen." }, { status: 503 });
       }
     }
 
-    const availableModels = await ensureAvailableModels(apiKey);
+    const availableModels = await ensureAvailableModels(configuredProviders);
     if (availableModels.length === 0) {
       return NextResponse.json(
         { error: "Daftar model belum dimuat dari provider. Silakan coba beberapa saat lagi." },
@@ -284,42 +306,144 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    // ── Map promo model IDs based on stage ──────────────────────────────
+    // promo:05 = main docs (3.5-flash → 3.5-flash-2603 → 3.7-flash)
+    // promo:05-repair = repair/alignment (3.7-flash → 3.5-flash-2603 → 3.5-flash)
+    const REPAIR_STAGES = ["quality-repair", "targeted-repair", "alignment"] as const;
+    const isRepairStage = REPAIR_STAGES.includes(resolvedStage as typeof REPAIR_STAGES[number]);
+
+    // Map promo model to actual model ID based on stage
+    function mapPromoModel(modelId: string): string {
+      if (modelId === "promo:05") {
+        // Main documents: prefer 3.5-flash first
+        return isRepairStage ? "sf/step-3.7-flash" : "sf/step-3.5-flash";
+      }
+      if (modelId === "promo:05-repair") {
+        // Repair/alignment: prefer 3.7-flash first
+        return isRepairStage ? "sf/step-3.7-flash" : "sf/step-3.5-flash";
+      }
+      return modelId;
+    }
+
+    // Apply mapping to fallback chain
+    const mappedChain = fallbackChain.map((c) => ({
+      ...c,
+      modelId: mapPromoModel(c.modelId),
+    }));
+
     // Attempt with fallback chain
     let lastError = "";
     let lastStatus = 500;
 
-    for (let attemptIndex = 0; attemptIndex < Math.min(fallbackChain.length, MAX_AUTO_FALLBACK_ATTEMPTS); attemptIndex++) {
-      const candidate = fallbackChain[attemptIndex];
+    for (let attemptIndex = 0; attemptIndex < Math.min(mappedChain.length, MAX_AUTO_FALLBACK_ATTEMPTS); attemptIndex++) {
+      const candidate = mappedChain[attemptIndex];
       const attemptStart = Date.now();
+
+      // Create attempt row BEFORE provider call (server-authoritative)
+      let attemptId = "";
+      try {
+        const db = await getDatabase();
+        attemptId = await storeProviderAttempt(db, {
+          generationId,
+          stage: resolvedStage,
+          operationId: candidate.modelId,
+          provider: "",
+          model: candidate.modelId,
+          attempt: attemptIndex + 1,
+          transportSuccess: false,
+          semanticStatus: "UNKNOWN",
+        });
+      } catch (e) {
+        console.error("[TELEMETRY_WRITE_FAILED]", { generationId, stage: resolvedStage, fn: "storeProviderAttempt", error: e instanceof Error ? e.message : e });
+      }
 
       const result = await attemptUpstreamCall(
         candidate.modelId,
         systemPrompt,
         userContent,
         maxOutputTokens,
-        apiKey,
+        providerOrder,
       );
 
+      // Update attempt row with transport results (attempt MUST not stay UNKNOWN on transport failure)
+      if (attemptId) {
+        try {
+          const db = await getDatabase();
+          if ("response" in result) {
+            await updateProviderAttemptResult(db, attemptId, {
+              provider: result.provider.id,
+              model: candidate.modelId,
+              latencyMs: Date.now() - attemptStart,
+              transportSuccess: true,
+              httpStatus: 200,
+              fallbackReasonCode: attemptIndex > 0 ? "FALLBACK_PRIMARY_FAILED" : undefined,
+              fallbackReasonDetail: attemptIndex > 0 ? lastError || undefined : undefined,
+            });
+          } else {
+            const fallbackClass = classifyFallbackReason(result.status, result.error);
+            // Transport failure: semantic MUST be FAILED, not UNKNOWN
+            await db.execute({
+              sql: `UPDATE provider_attempts SET
+                provider = ?, model = ?, latency_ms = ?,
+                transport_success = 0, http_status = ?,
+                semantic_status = 'FAILED',
+                fallback_reason_code = ?, fallback_reason_detail = ?
+              WHERE attempt_id = ? AND semantic_status = 'UNKNOWN'`,
+              args: [
+                providerOrder[0]?.id || "unknown",
+                candidate.modelId,
+                Date.now() - attemptStart,
+                result.status,
+                fallbackClass.code,
+                fallbackClass.detail,
+                attemptId,
+              ],
+            });
+          }
+        } catch (e) {
+          console.error("[TELEMETRY_WRITE_FAILED]", { generationId, stage: resolvedStage, attemptId, fn: "updateProviderAttemptResult", error: e instanceof Error ? e.message : e });
+          // Last resort: ensure attempt does not stay UNKNOWN on transport failure
+          if (!("response" in result)) {
+            try {
+              const db = await getDatabase();
+              await db.execute({
+                sql: `UPDATE provider_attempts SET semantic_status = 'FAILED', fallback_reason_code = 'TELEMETRY_WRITE_FAILED'
+                  WHERE attempt_id = ? AND semantic_status = 'UNKNOWN'`,
+                args: [attemptId],
+              });
+            } catch (e2) {
+              console.error("[TELEMETRY_WRITE_FAILED]", { generationId, stage: resolvedStage, attemptId, fn: "lastResortSemanticFAILED", error: e2 instanceof Error ? e2.message : e2 });
+            }
+          }
+        }
+      }
+
       if ("response" in result) {
-        // Success
-        recordModelOutcome(candidate.modelId, resolvedStage, true, Date.now() - attemptStart);
+        // An HTTP 200 only means the stream was accepted. The browser reports
+        // the semantic result after it validates the completed output.
 
         // If we used a fallback, log it
         if (attemptIndex > 0) {
-          // Add header so frontend knows which model was actually used
           const response = result.response;
-          const headers = new Headers(response.headers);
-          headers.set("X-Model-Used", candidate.modelId);
-          headers.set("X-Model-Fallback-Index", String(attemptIndex));
+          const metadata: Record<string, string> = {
+            "X-Model-Used": candidate.modelId,
+            "X-Model-Fallback-Index": String(attemptIndex),
+            "X-AI-Provider": result.provider.id,
+          };
+          if (attemptId) metadata["X-Attempt-Id"] = attemptId;
 
           if (!response.headers.get("content-type")?.includes("text/event-stream")) {
             const jsonResult = await response.json();
-            return wrapJsonAsSSE(jsonResult);
+            return wrapJsonAsSSE(jsonResult, metadata);
           }
 
           return new NextResponse(response.body, {
             status: 200,
-            headers: { "Content-Type": "text/event-stream", "Cache-Control": "no-cache", Connection: "keep-alive", "X-Accel-Buffering": "no", "X-Model-Used": candidate.modelId, "X-Model-Fallback-Index": String(attemptIndex) },
+            headers: {
+              "Content-Type": "text/event-stream", "Cache-Control": "no-cache", Connection: "keep-alive", "X-Accel-Buffering": "no",
+              "X-Model-Used": candidate.modelId, "X-Model-Fallback-Index": String(attemptIndex), "X-AI-Provider": result.provider.id,
+              ...(attemptId ? { "X-Attempt-Id": attemptId } : {}),
+            },
           });
         }
 
@@ -327,17 +451,25 @@ export async function POST(request: NextRequest) {
         const upstreamContentType = result.response.headers.get("content-type") ?? "";
         if (!upstreamContentType.includes("text/event-stream")) {
           const jsonResult = await result.response.json();
-          return wrapJsonAsSSE(jsonResult);
+          return wrapJsonAsSSE(jsonResult, {
+            "X-Model-Used": candidate.modelId, "X-AI-Provider": result.provider.id,
+            ...(attemptId ? { "X-Attempt-Id": attemptId } : {}),
+          });
         }
 
         return new NextResponse(result.response.body, {
           status: 200,
-          headers: { "Content-Type": "text/event-stream", "Cache-Control": "no-cache", Connection: "keep-alive", "X-Accel-Buffering": "no", "X-Model-Used": candidate.modelId },
+          headers: {
+            "Content-Type": "text/event-stream", "Cache-Control": "no-cache", Connection: "keep-alive", "X-Accel-Buffering": "no",
+            "X-Model-Used": candidate.modelId, "X-AI-Provider": result.provider.id,
+            ...(attemptId ? { "X-Attempt-Id": attemptId } : {}),
+          },
         });
       }
 
       // Failure
       recordModelOutcome(candidate.modelId, resolvedStage, false, Date.now() - attemptStart);
+
       lastError = result.error;
       lastStatus = result.status;
 
@@ -353,7 +485,7 @@ export async function POST(request: NextRequest) {
 
   // ── Direct Model Mode (non-auto, backward compatible) ────────────────
   const isFlagship = isFlagshipModel(modelId);
-  if (!isRevision && user) {
+  if (user) {
     try {
       const db = await getDatabase();
       const generationResult = await db.execute({
@@ -379,44 +511,111 @@ export async function POST(request: NextRequest) {
     } catch (error) {
       return NextResponse.json({ error: error instanceof Error ? error.message : "Pembuatan dokumen tidak dapat diverifikasi." }, { status: 503 });
     }
-  } else if (isRevision && user && isFlagship && user.role !== "admin") {
-    try {
-      const db = await getDatabase();
-      const purchasedResult = await db.execute({
-        sql: "SELECT 1 FROM credit_transactions WHERE user_email = ? AND amount > 3 AND reason != 'Kredit awal akun baru' LIMIT 1",
-        args: [user.email],
-      });
-      if (!purchasedResult.rows[0]) {
-        return NextResponse.json({ error: "Model Flagship hanya tersedia untuk akun yang telah membeli paket Pro." }, { status: 403 });
-      }
-    } catch {
-      // ignore
-    }
-  } else if (!user && isFlagship) {
+  } else if (isFlagship) {
     return NextResponse.json({ error: "Model Flagship hanya tersedia untuk akun Pro Studio." }, { status: 403 });
   }
 
   // Direct upstream call for explicit model
+  const directStart = Date.now();
+
+  // Create attempt row BEFORE provider call
+  let directAttemptId = "";
+  if (generationId) {
+    try {
+      const db = await getDatabase();
+      directAttemptId = await storeProviderAttempt(db, {
+        generationId,
+        stage: (stage || "unknown") as string,
+        operationId: modelId,
+        provider: "",
+        model: modelId,
+        attempt: 1,
+        transportSuccess: false,
+        semanticStatus: "UNKNOWN",
+      });
+    } catch (e) {
+      console.error("[TELEMETRY_WRITE_FAILED]", { generationId, stage: stage || "unknown", fn: "storeProviderAttempt-direct", error: e instanceof Error ? e.message : e });
+    }
+  }
+
   const upstreamResponse = await attemptUpstreamCall(
     modelId,
     systemPrompt,
     userContent,
     maxOutputTokens,
-    apiKey,
+    providerOrder,
   );
+
+  // Update attempt row with transport results (attempt MUST not stay UNKNOWN on transport failure)
+  if (directAttemptId) {
+    try {
+      const db = await getDatabase();
+      if ("response" in upstreamResponse) {
+        await updateProviderAttemptResult(db, directAttemptId, {
+          provider: upstreamResponse.provider.id,
+          model: modelId,
+          latencyMs: Date.now() - directStart,
+          transportSuccess: true,
+          httpStatus: 200,
+        });
+      } else {
+        const fallbackClass = classifyFallbackReason(upstreamResponse.status, upstreamResponse.error);
+        // Transport failure: semantic MUST be FAILED, not UNKNOWN
+        await db.execute({
+          sql: `UPDATE provider_attempts SET
+            provider = ?, model = ?, latency_ms = ?,
+            transport_success = 0, http_status = ?,
+            semantic_status = 'FAILED',
+            fallback_reason_code = ?, fallback_reason_detail = ?
+          WHERE attempt_id = ? AND semantic_status = 'UNKNOWN'`,
+          args: [
+            providerOrder[0]?.id || "unknown",
+            modelId,
+            Date.now() - directStart,
+            upstreamResponse.status,
+            fallbackClass.code,
+            fallbackClass.detail,
+            directAttemptId,
+          ],
+        });
+      }
+    } catch (e) {
+      console.error("[TELEMETRY_WRITE_FAILED]", { generationId, stage: stage || "unknown", attemptId: directAttemptId, fn: "updateProviderAttemptResult-direct", error: e instanceof Error ? e.message : e });
+      // Last resort: ensure attempt does not stay UNKNOWN on transport failure
+      if (!("response" in upstreamResponse)) {
+        try {
+          const db = await getDatabase();
+          await db.execute({
+            sql: `UPDATE provider_attempts SET semantic_status = 'FAILED', fallback_reason_code = 'TELEMETRY_WRITE_FAILED'
+              WHERE attempt_id = ? AND semantic_status = 'UNKNOWN'`,
+            args: [directAttemptId],
+          });
+        } catch (e2) {
+          console.error("[TELEMETRY_WRITE_FAILED]", { generationId, stage: stage || "unknown", attemptId: directAttemptId, fn: "lastResortSemanticFAILED-direct", error: e2 instanceof Error ? e2.message : e2 });
+        }
+      }
+    }
+  }
 
   if ("error" in upstreamResponse) {
     return NextResponse.json({ error: upstreamResponse.error }, { status: upstreamResponse.status });
   }
 
+  const directHeaders: Record<string, string> = {
+    "Content-Type": "text/event-stream", "Cache-Control": "no-cache", Connection: "keep-alive", "X-Accel-Buffering": "no",
+    "X-AI-Provider": upstreamResponse.provider.id,
+    "X-Model-Used": modelId,
+  };
+  if (directAttemptId) directHeaders["X-Attempt-Id"] = directAttemptId;
+
   const upstreamContentType = upstreamResponse.response.headers.get("content-type") ?? "";
   if (!upstreamContentType.includes("text/event-stream")) {
     const result = await upstreamResponse.response.json();
-    return wrapJsonAsSSE(result);
+    return wrapJsonAsSSE(result, directHeaders);
   }
 
   return new NextResponse(upstreamResponse.response.body, {
     status: 200,
-    headers: { "Content-Type": "text/event-stream", "Cache-Control": "no-cache", Connection: "keep-alive", "X-Accel-Buffering": "no" },
+    headers: directHeaders,
   });
 }

@@ -16,9 +16,8 @@ import {
   Loader2,
   Edit3,
   Eye,
-  MessageSquarePlus,
-  Send,
   Zap,
+  Copy,
 } from "lucide-react";
 import { toast } from "sonner";
 import ReactMarkdown from "react-markdown";
@@ -26,15 +25,7 @@ import remarkGfm from "remark-gfm";
 
 import { useDocumentGenerator } from "@/hooks/useDocumentGenerator";
 import { downloadMarkdown, FILES } from "@/lib/stream-parser";
-import { downloadAllAsZip } from "@/lib/export";
-import {
-  analyzeRevisionImpact,
-  createLineDiff,
-  type RevisionImpact,
-  type RevisionPreview,
-  type RevisionScope,
-} from "@/lib/revision-impact";
-import type { FileName } from "@/lib/types";
+import { generateVibeCoderPrompt, hasAllDocumentsReady } from "@/lib/vibecoder-prompt";
 
 const QUICK_PROMPTS = [
   {
@@ -97,35 +88,6 @@ Data penting, integrasi, dan teknologi yang diinginkan:
 Aturan bisnis, keamanan, atau batasan khusus:
 Preferensi desain, bahasa, atau contoh referensi:`;
 
-const REVISION_QUICK_PROMPTS: Record<FileName, Array<{ label: string; instruction: string }>> = {
-  "PRD.md": [
-    { label: "Tambah Fitur", instruction: "Tambahkan fitur baru beserta user story, prioritas, dan kriteria penerimaannya." },
-    { label: "Tambah Role", instruction: "Tambahkan role baru, kebutuhan pengguna, dan batas permission yang jelas." },
-    { label: "Ubah MVP", instruction: "Perbarui scope MVP, V1, dan Future agar prioritas rilis lebih realistis." },
-    { label: "Acceptance Criteria", instruction: "Perjelas kriteria penerimaan untuk setiap alur utama dan kondisi gagal." },
-  ],
-  "TECH-STACK.md": [
-    { label: "Security", instruction: "Perkuat desain keamanan, autentikasi, otorisasi, audit, dan perlindungan data sensitif." },
-    { label: "API Architecture", instruction: "Perjelas arsitektur API, versioning endpoint, kontrak request/response, dan error response." },
-    { label: "Deployment", instruction: "Tambahkan strategi deployment, environment, CI/CD, rollback, dan observabilitas." },
-    { label: "Error Handling", instruction: "Perjelas edge case, penanganan galat, retry, idempotency, dan timeout." },
-  ],
-  "UI-UX.md": [
-    { label: "Halaman Baru", instruction: "Tambahkan halaman baru lengkap dengan tujuan, struktur, state, dan interaksinya." },
-    { label: "Responsive Mobile", instruction: "Perkuat perilaku responsif mobile, prioritas konten, dan interaksi layar kecil." },
-    { label: "User Flow", instruction: "Perjelas user flow utama, kondisi kosong, loading, sukses, dan galat." },
-    { label: "Design System", instruction: "Lengkapi design token, komponen, variasi state, dan aturan aksesibilitas." },
-  ],
-  "SCHEMA.md": [
-    { label: "Tambah Entitas", instruction: "Tambahkan entitas baru beserta kolom, relasi, constraint, index, dan lifecycle yang diperlukan." },
-    { label: "Role & Permission", instruction: "Perjelas role, permission data, row-level access, dan audit atas perubahan penting." },
-    { label: "Audit Log", instruction: "Tambahkan audit log yang mencatat aktor, aksi, perubahan data, waktu, dan konteksnya." },
-    { label: "Index & Constraint", instruction: "Tambahkan index dan constraint untuk integritas data, uniqueness, foreign key, dan query utama." },
-    { label: "Soft Delete", instruction: "Tambahkan strategi soft delete, retensi, pemulihan, dan filter data aktif." },
-    { label: "Riwayat Perubahan", instruction: "Tambahkan riwayat perubahan untuk data penting beserta actor dan alasan perubahan." },
-  ],
-};
-
 type StudioWorkbenchProps = {
   initialPrompt?: string;
   initialProjectName?: string;
@@ -150,15 +112,8 @@ export default function StudioWorkbench({
   const [showOutOfCreditsModal, setShowOutOfCreditsModal] = useState<boolean>(false);
   const [promptError, setPromptError] = useState<string>("");
   const [showPromptGuide, setShowPromptGuide] = useState(false);
-  const [revisionError, setRevisionError] = useState<string>("");
-
   const [isEditMode, setIsEditMode] = useState(false);
-  const [showRevisionModal, setShowRevisionModal] = useState(false);
-  const [revisionInstruction, setRevisionInstruction] = useState("");
-  const [isSubmittingRevision, setIsSubmittingRevision] = useState(false);
-  const [revisionScope, setRevisionScope] = useState<RevisionScope>("document");
-  const [revisionImpact, setRevisionImpact] = useState<RevisionImpact | null>(null);
-  const [revisionPreview, setRevisionPreview] = useState<RevisionPreview | null>(null);
+  const [showVibeCoderModal, setShowVibeCoderModal] = useState(false);
 
   const {
     files,
@@ -172,8 +127,6 @@ export default function StudioWorkbench({
     lastError,
     setActiveFile,
     updateFileContent,
-    prepareRevision,
-    applyRevisionPreview,
     generateFromPrompt,
     resetAll,
   } = useDocumentGenerator(projectId, initialProjectName);
@@ -310,7 +263,7 @@ export default function StudioWorkbench({
       return;
     }
     if (!hasResult) {
-      toast.error("Dokumen akan dapat disalin setelah Blueprint Quality Gate V2.1 lulus.");
+      toast.error("Dokumen akan dapat disalin setelah empat dokumen selesai dibuat.");
       return;
     }
     await navigator.clipboard.writeText(text);
@@ -324,69 +277,81 @@ export default function StudioWorkbench({
       return;
     }
     if (!hasResult) {
-      toast.error("Dokumen akan dapat diunduh setelah Blueprint Quality Gate V2.1 lulus.");
+      toast.error("Dokumen akan dapat diunduh setelah empat dokumen selesai dibuat.");
       return;
     }
     downloadMarkdown(activeFile, text);
-    toast.success(`${activeFile} berhasil diunduh`);
+    if (qualityState === "failed") {
+      toast.warning(`${activeFile} diunduh sebagai draf. Anda dapat menyempurnakannya lewat Edit Manual.`);
+    } else {
+      toast.success(`${activeFile} berhasil diunduh`);
+    }
   }
 
-  function handleDownloadZip() {
+  async function handleDownloadZip() {
     if (!hasResult) {
-      toast.error("ZIP tersedia setelah Blueprint Quality Gate V2.1 lulus.");
+      toast.error("ZIP tersedia setelah empat dokumen selesai dibuat.");
       return;
     }
-    downloadAllAsZip(files, initialProjectName);
-    toast.success("File ZIP 4 dokumen berhasil diunduh.");
-  }
-
-  function openRevisionModal() {
-    setRevisionError("");
-    setRevisionImpact(null);
-    setRevisionScope("document");
-    setShowRevisionModal(true);
-  }
-
-  async function requestRevisionPreview(scope: RevisionScope, skipImpactConfirmation = false) {
-    const instruction = revisionInstruction.trim();
-    if (!instruction) {
-      setRevisionError("Tuliskan instruksi atau komentar revisi terlebih dahulu.");
+    if (!projectId || projectId === "default_project") {
+      toast.error("Proyek belum tersimpan. Silakan buat ulang dari halaman proyek Anda.");
       return;
     }
-    if (instruction.length < 5) {
-      setRevisionError("Instruksi revisi minimal 5 karakter.");
-      return;
-    }
-
-    const impact = analyzeRevisionImpact(activeFile, instruction);
-    if (scope === "document" && impact.affectedFiles.length && !skipImpactConfirmation) {
-      setRevisionImpact(impact);
-      return;
-    }
-
-    setRevisionError("");
-    setRevisionImpact(null);
-    setRevisionScope(scope);
-    setIsSubmittingRevision(true);
-    const preview = await prepareRevision(activeFile, instruction, scope);
-    setIsSubmittingRevision(false);
-    if (preview) {
-      setRevisionPreview(preview);
-      setShowRevisionModal(false);
+    try {
+      const response = await fetch(`/api/projects/${encodeURIComponent(projectId)}/download`);
+      if (!response.ok) {
+        const payload = await response.json().catch(() => null) as { error?: string } | null;
+        throw new Error(payload?.error || "ZIP dokumen tidak dapat dibuat.");
+      }
+      const content = await response.blob();
+      const url = URL.createObjectURL(content);
+      const anchor = document.createElement("a");
+      anchor.href = url;
+      anchor.download = `${initialProjectName.trim() || "dokumenku-ai-documents"}.zip`;
+      document.body.appendChild(anchor);
+      anchor.click();
+      anchor.remove();
+      URL.revokeObjectURL(url);
+      if (qualityState === "failed") {
+        toast.warning("ZIP 4 dokumen diunduh sebagai draf. Anda dapat menyempurnakannya lewat Edit Manual.");
+      } else {
+        toast.success("File ZIP 4 dokumen berhasil diunduh.");
+      }
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "ZIP dokumen tidak dapat dibuat.");
     }
   }
 
-  async function applyPreparedRevision() {
-    if (!revisionPreview) return;
-    setIsSubmittingRevision(true);
-    const applied = await applyRevisionPreview(revisionPreview);
-    setIsSubmittingRevision(false);
-    if (applied) {
-      setRevisionPreview(null);
-      setRevisionInstruction("");
-      setRevisionImpact(null);
-      setRevisionScope("document");
+  async function handleCopyVibeCoderPrompt() {
+    if (!hasAllDocumentsReady(files)) {
+      toast.error("Seluruh 4 dokumen harus selesai dibuat terlebih dahulu.");
+      return;
     }
+    const promptText = generateVibeCoderPrompt(files, initialProjectName);
+    try {
+      await navigator.clipboard.writeText(promptText);
+      toast.success("Prompt VibeCoder berhasil disalin! Siap ditempel ke Claude Code, Cursor, Windsurf, atau Copilot.");
+    } catch {
+      toast.error("Gagal menyalin ke clipboard. Silakan buka modal pratinjau prompt.");
+    }
+  }
+
+  function handleDownloadVibeCoderPrompt() {
+    if (!hasAllDocumentsReady(files)) {
+      toast.error("Seluruh 4 dokumen harus selesai dibuat terlebih dahulu.");
+      return;
+    }
+    const promptText = generateVibeCoderPrompt(files, initialProjectName);
+    const blob = new Blob([promptText], { type: "text/markdown;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    anchor.download = `VIBECODER-PROMPT-${initialProjectName.trim().toLowerCase().replace(/\s+/g, "-") || "proyek"}.md`;
+    document.body.appendChild(anchor);
+    anchor.click();
+    anchor.remove();
+    URL.revokeObjectURL(url);
+    toast.success("File VIBECODER-PROMPT.md berhasil diunduh.");
   }
 
   const activeContent = files[activeFile] || "";
@@ -717,35 +682,66 @@ export default function StudioWorkbench({
               </h2>
             </div>
 
-            <button
-              type="button"
-              className="btn-secondary studio-zip-btn"
-              onClick={handleDownloadZip}
-              disabled={!hasResult}
-            >
-              <Download size={14} /> <span>Unduh Semua (.ZIP)</span>
-            </button>
+            <div style={{ display: "flex", alignItems: "center", gap: "8px", flexWrap: "wrap" }}>
+              <button
+                type="button"
+                className="btn-primary studio-vibecoder-btn"
+                style={{
+                  background: "linear-gradient(135deg, #0D9488 0%, #0F766E 100%)",
+                  color: "#FFFFFF",
+                  border: "none",
+                  boxShadow: (hasResult || hasAllDocumentsReady(files)) ? "0 2px 8px rgba(13, 148, 136, 0.3)" : "none",
+                  display: "inline-flex",
+                  alignItems: "center",
+                  gap: "6px",
+                  fontWeight: 650,
+                  fontSize: "0.78rem",
+                  padding: "0 14px",
+                  minHeight: "36px",
+                  borderRadius: "8px",
+                  cursor: (hasResult || hasAllDocumentsReady(files)) ? "pointer" : "not-allowed",
+                  opacity: (hasResult || hasAllDocumentsReady(files)) ? 1 : 0.5,
+                }}
+                onClick={handleCopyVibeCoderPrompt}
+                disabled={!hasResult && !hasAllDocumentsReady(files)}
+                title="Salin master prompt yang menggabungkan 4 dokumen ini untuk Cursor, Claude Code, Windsurf, Copilot, dll."
+              >
+                <Copy size={15} /> <span>Salin Prompt</span>
+              </button>
+
+              <button
+                type="button"
+                className="btn-secondary studio-zip-btn"
+                onClick={() => void handleDownloadZip()}
+                disabled={!hasResult}
+              >
+                <Download size={14} /> <span>Unduh Semua (.ZIP)</span>
+              </button>
+            </div>
           </div>
 
           <div className="studio-output-card">
             {/* Top Status */}
             <div className="output-status-bar">
               {qualityState === "passed" ? <Shield size={14} /> : <Clock size={14} />}
-              <span>
-                {isGenerating
-                  ? qualityState === "building" && progress <= 10
-                    ? "MENYUSUN BLUEPRINT INTERNAL..."
-                    : qualityState === "validating"
-                      ? "BLUEPRINT QUALITY GATE V2 MEMERIKSA..."
-                      : `SEDANG MENULIS ${activeFile} (${progress}%)`
-                  : hasResult
-                    ? qualityReport
-                      ? `QUALITY GATE V2 LULUS · ${qualityReport.score}%`
-                      : "DOKUMEN LENGKAP"
-                    : qualityState === "failed"
-                      ? "QUALITY GATE V2 PERLU PERBAIKAN"
-                      : "MENUNGGU BRIEF"}
-              </span>
+              {isGenerating && qualityState === "validating" ? (
+                <span className="output-status-copy">
+                  <span>Menyelesaikan blueprint...</span>
+                  <small>Memeriksa konsistensi dokumen.</small>
+                </span>
+              ) : (
+                <span className="output-status-copy">
+                  {isGenerating
+                    ? qualityState === "building" && progress <= 10
+                      ? "Menyiapkan blueprint..."
+                      : `Menyusun ${activeFile} (${progress}%)...`
+                    : hasResult
+                      ? "Dokumen siap digunakan"
+                      : qualityState === "failed"
+                        ? "Dokumen memerlukan penyesuaian"
+                        : "Menunggu brief"}
+                </span>
+              )}
             </div>
 
             {/* 4 Tabs Bar */}
@@ -800,6 +796,24 @@ export default function StudioWorkbench({
               <div className="doc-inner-actions">
                 <button
                   type="button"
+                  className="btn-secondary"
+                  style={{
+                    minHeight: "30px",
+                    padding: "0 10px",
+                    fontSize: "0.74rem",
+                    color: "var(--teal-dark, #0f766e)",
+                    background: (hasResult || hasAllDocumentsReady(files)) ? "#F0FDFA" : undefined,
+                    borderColor: (hasResult || hasAllDocumentsReady(files)) ? "#99F6E4" : undefined,
+                  }}
+                  onClick={() => setShowVibeCoderModal(true)}
+                  disabled={!hasResult && !hasAllDocumentsReady(files)}
+                  title="Lihat master prompt lengkap"
+                >
+                  <Copy size={13} /> <span>Pratinjau Prompt</span>
+                </button>
+
+                <button
+                  type="button"
                   className={`btn-secondary ${isEditMode ? "active" : ""}`}
                   style={{
                     minHeight: "30px",
@@ -815,23 +829,6 @@ export default function StudioWorkbench({
                 >
                   {isEditMode ? <Eye size={13} /> : <Edit3 size={13} />}
                   <span>{isEditMode ? "Pratinjau" : "Edit Manual"}</span>
-                </button>
-
-                <button
-                  type="button"
-                  className="btn-secondary"
-                  style={{
-                    minHeight: "30px",
-                    padding: "0 10px",
-                    fontSize: "0.74rem",
-                    color: "var(--cobalt)",
-                  }}
-                  onClick={openRevisionModal}
-                  disabled={!activeContent || isGenerating}
-                  title="Minta AI merevisi dokumen ini berdasarkan instruksi Anda"
-                >
-                  <MessageSquarePlus size={13} />
-                  <span>Revisi AI</span>
                 </button>
 
                 <button
@@ -955,8 +952,10 @@ export default function StudioWorkbench({
                   {isGenerating
                     ? "Sedang memproses dokumen secara real-time..."
                     : isEditMode
-                      ? "Mode Edit Manual — Perubahan otomatis tersimpan"
-                      : "Siap menerima brief proyek atau revisi"}
+                    ? "Mode Edit Manual — Perubahan otomatis tersimpan"
+                    : qualityState === "failed" && hasResult
+                      ? "Dokumen tersimpan sebagai draf — unduh atau edit manual"
+                    : "Siap menerima brief proyek"}
                 </span>
               </div>
               <span style={{ fontSize: "0.74rem", color: "var(--text-muted)" }}>
@@ -1020,252 +1019,6 @@ export default function StudioWorkbench({
                 }}
               >
                 Tambahkan Format ke Brief
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* ── Modal Dialog Revisi AI ──────────────────────────────── */}
-      {showRevisionModal && (
-        <div
-          className="studio-modal-backdrop"
-          onClick={() => !isSubmittingRevision && setShowRevisionModal(false)}
-        >
-          <div
-            className="studio-modal-card"
-            onClick={(e) => e.stopPropagation()}
-            role="dialog"
-            aria-modal="true"
-            aria-labelledby="revision-modal-title"
-          >
-            <div className="studio-modal-header">
-              <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
-                <MessageSquarePlus size={18} color="var(--cobalt)" />
-                <strong id="revision-modal-title" style={{ fontSize: "1.05rem", color: "var(--navy)" }}>
-                  Revisi {activeFile} dengan AI
-                </strong>
-              </div>
-              <button
-                type="button"
-                className="studio-modal-close"
-                onClick={() => setShowRevisionModal(false)}
-                disabled={isSubmittingRevision}
-              >
-                ✕
-              </button>
-            </div>
-
-            <div className="studio-modal-body">
-              <p style={{ fontSize: "0.84rem", color: "var(--text-muted)", margin: "0 0 12px", lineHeight: "1.5" }}>
-                Tulis perubahan yang ingin diterapkan pada <strong>{activeFile}</strong>. AI akan menganalisis dampaknya dan menjaga konsistensi dengan blueprint proyek.
-              </p>
-
-              <textarea
-                className={`studio-revision-textarea ${revisionError ? "has-error" : ""}`}
-                rows={4}
-                value={revisionInstruction}
-                onChange={(e) => {
-                  setRevisionInstruction(e.target.value);
-                  if (revisionError) setRevisionError("");
-                  if (revisionImpact) setRevisionImpact(null);
-                }}
-                placeholder={`Contoh: ${REVISION_QUICK_PROMPTS[activeFile][0]?.instruction}`}
-                disabled={isSubmittingRevision}
-                autoFocus
-              />
-              {revisionError && (
-                <span className="studio-inline-error">{revisionError}</span>
-              )}
-
-              <div className="studio-revision-hints">
-                <span style={{ fontSize: "0.74rem", fontWeight: 700, color: "var(--text-muted)" }}>
-                  💡 Contoh instruksi cepat:
-                </span>
-                <div style={{ display: "flex", flexWrap: "wrap", gap: "6px", marginTop: "4px" }}>
-                  {REVISION_QUICK_PROMPTS[activeFile].map((prompt) => (
-                    <button
-                      key={prompt.label}
-                      type="button"
-                      className="hint-chip"
-                      onClick={() => {
-                        setRevisionInstruction(prompt.instruction);
-                        setRevisionImpact(null);
-                        if (revisionError) setRevisionError("");
-                      }}
-                      disabled={isSubmittingRevision}
-                    >
-                      + {prompt.label}
-                    </button>
-                  ))}
-                </div>
-              </div>
-
-              <fieldset style={{ border: 0, padding: 0, margin: "18px 0 0" }}>
-                <legend style={{ fontSize: "0.78rem", fontWeight: 800, color: "var(--navy)", marginBottom: "8px" }}>
-                  Cakupan Revisi
-                </legend>
-                <label style={{ display: "flex", gap: "9px", alignItems: "flex-start", cursor: "pointer", marginBottom: "10px" }}>
-                  <input
-                    type="radio"
-                    name="revision-scope"
-                    checked={revisionScope === "document"}
-                    onChange={() => {
-                      setRevisionScope("document");
-                      setRevisionImpact(null);
-                    }}
-                    disabled={isSubmittingRevision}
-                  />
-                  <span>
-                    <strong style={{ display: "block", fontSize: "0.82rem", color: "var(--navy)" }}>Dokumen ini saja</strong>
-                    <span style={{ fontSize: "0.76rem", color: "var(--text-muted)" }}>Hanya {activeFile} yang akan diperbarui.</span>
-                  </span>
-                </label>
-                <label style={{ display: "flex", gap: "9px", alignItems: "flex-start", cursor: "pointer" }}>
-                  <input
-                    type="radio"
-                    name="revision-scope"
-                    checked={revisionScope === "related"}
-                    onChange={() => {
-                      setRevisionScope("related");
-                      setRevisionImpact(null);
-                    }}
-                    disabled={isSubmittingRevision}
-                  />
-                  <span>
-                    <strong style={{ display: "block", fontSize: "0.82rem", color: "var(--navy)" }}>Sinkronkan dokumen terkait</strong>
-                    <span style={{ fontSize: "0.76rem", color: "var(--text-muted)" }}>AI memperbarui dokumen lain hanya bila perubahan memengaruhi PRD, Tech Stack, UI/UX, atau schema.</span>
-                  </span>
-                </label>
-              </fieldset>
-
-              {revisionImpact && (
-                <div role="alert" style={{ marginTop: "16px", padding: "12px", borderRadius: "10px", border: "1px solid #BFDBFE", background: "#EFF6FF" }}>
-                  <strong style={{ display: "block", fontSize: "0.82rem", color: "#1E3A8A", marginBottom: "7px" }}>Perubahan ini juga memengaruhi:</strong>
-                  <div style={{ display: "flex", flexWrap: "wrap", gap: "6px", marginBottom: "7px" }}>
-                    {revisionImpact.affectedFiles.map((file) => (
-                      <span key={file} style={{ fontSize: "0.73rem", fontWeight: 700, color: "#1D4ED8", background: "#DBEAFE", borderRadius: "999px", padding: "3px 8px" }}>✓ {file}</span>
-                    ))}
-                  </div>
-                  <span style={{ display: "block", fontSize: "0.75rem", color: "#475569", lineHeight: "1.45" }}>{revisionImpact.reasons.join("; ")}.</span>
-                  <div style={{ display: "flex", flexWrap: "wrap", gap: "8px", marginTop: "10px" }}>
-                    <button type="button" className="btn-secondary" onClick={() => void requestRevisionPreview("document", true)} disabled={isSubmittingRevision}>
-                      Revisi {activeFile.replace(".md", "")} saja
-                    </button>
-                    <button type="button" className="btn-primary" onClick={() => void requestRevisionPreview("related", true)} disabled={isSubmittingRevision}>
-                      Sinkronkan {revisionImpact.affectedFiles.length + 1} Dokumen
-                    </button>
-                  </div>
-                </div>
-              )}
-            </div>
-
-            <div className="studio-modal-footer">
-              <button
-                type="button"
-                className="btn-secondary"
-                onClick={() => {
-                  setShowRevisionModal(false);
-                  setRevisionImpact(null);
-                }}
-                disabled={isSubmittingRevision}
-              >
-                Batal
-              </button>
-              <button
-                type="button"
-                className="btn-primary"
-                onClick={() => void requestRevisionPreview(revisionScope)}
-                disabled={isSubmittingRevision || !revisionInstruction.trim()}
-              >
-                {isSubmittingRevision ? (
-                  <>
-                    <Loader2 size={14} className="animate-spin" />
-                    <span>Menyiapkan Perubahan...</span>
-                  </>
-                ) : (
-                  <>
-                    <Send size={14} />
-                    <span>Lihat Perubahan</span>
-                  </>
-                )}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {revisionPreview && (
-        <div
-          className="studio-modal-backdrop"
-          onClick={() => !isSubmittingRevision && setRevisionPreview(null)}
-        >
-          <div
-            className="studio-modal-card"
-            onClick={(event) => event.stopPropagation()}
-            role="dialog"
-            aria-modal="true"
-            aria-labelledby="revision-preview-title"
-            style={{ maxWidth: "760px" }}
-          >
-            <div className="studio-modal-header">
-              <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
-                <Eye size={18} color="var(--cobalt)" />
-                <strong id="revision-preview-title" style={{ fontSize: "1.05rem", color: "var(--navy)" }}>
-                  Perubahan siap diterapkan
-                </strong>
-              </div>
-              <button
-                type="button"
-                className="studio-modal-close"
-                onClick={() => setRevisionPreview(null)}
-                disabled={isSubmittingRevision}
-              >
-                ✕
-              </button>
-            </div>
-
-            <div className="studio-modal-body" style={{ maxHeight: "62vh", overflowY: "auto" }}>
-              <p style={{ fontSize: "0.82rem", color: "var(--text-muted)", margin: "0 0 12px", lineHeight: "1.5" }}>
-                Tinjau draft dari AI sebelum disimpan. Dokumen asli tidak berubah sampai Anda memilih <strong>Terapkan</strong>.
-              </p>
-              {revisionPreview.scope === "document" && revisionPreview.impact.affectedFiles.length > 0 && (
-                <div role="alert" style={{ marginBottom: "12px", padding: "10px 12px", borderRadius: "9px", background: "#FFFBEB", border: "1px solid #FDE68A", color: "#92400E", fontSize: "0.78rem", lineHeight: "1.45" }}>
-                  Perubahan {Object.keys(revisionPreview.after).join(", ")} berpotensi memengaruhi {revisionPreview.impact.affectedFiles.join(", ")}. Quality Gate akan memeriksa konsistensi saat revisi diterapkan.
-                </div>
-              )}
-              {Object.entries(revisionPreview.after).map(([fileName, after]) => {
-                const file = fileName as FileName;
-                const before = revisionPreview.before[file] || "";
-                const diff = createLineDiff(before, after);
-                return (
-                  <section key={file} style={{ marginBottom: "16px" }}>
-                    <strong style={{ display: "block", fontSize: "0.84rem", color: "var(--navy)", marginBottom: "7px" }}>{file}</strong>
-                    <pre style={{ margin: 0, padding: "10px 12px", borderRadius: "9px", background: "#0F172A", color: "#E2E8F0", fontSize: "0.72rem", lineHeight: "1.55", overflowX: "auto", whiteSpace: "pre-wrap" }}>
-                      {diff.map((line, index) => (
-                        <span
-                          key={`${line.kind}-${index}-${line.value}`}
-                          style={{ display: "block", color: line.kind === "added" ? "#86EFAC" : line.kind === "removed" ? "#FCA5A5" : "#94A3B8" }}
-                        >
-                          {line.kind === "added" ? "+ " : line.kind === "removed" ? "- " : "  "}{line.value}
-                        </span>
-                      ))}
-                    </pre>
-                  </section>
-                );
-              })}
-            </div>
-
-            <div className="studio-modal-footer">
-              <button type="button" className="btn-secondary" onClick={() => setRevisionPreview(null)} disabled={isSubmittingRevision}>
-                Batalkan
-              </button>
-              <button type="button" className="btn-primary" onClick={() => void applyPreparedRevision()} disabled={isSubmittingRevision}>
-                {isSubmittingRevision ? (
-                  <><Loader2 size={14} className="animate-spin" /><span>Menyimpan Revisi...</span></>
-                ) : (
-                  <><Send size={14} /><span>Terapkan</span></>
-                )}
               </button>
             </div>
           </div>
@@ -1355,6 +1108,124 @@ export default function StudioWorkbench({
               >
                 Lihat Paket Harga
               </a>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Modal Dialog Master Prompt VibeCoder ─────────────────── */}
+      {showVibeCoderModal && (
+        <div
+          className="studio-modal-backdrop"
+          onClick={() => setShowVibeCoderModal(false)}
+        >
+          <div
+            className="studio-modal-card"
+            onClick={(e) => e.stopPropagation()}
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="vibecoder-modal-title"
+            style={{ maxWidth: "780px", width: "94vw", maxHeight: "88vh", display: "flex", flexDirection: "column" }}
+          >
+            <div className="studio-modal-header" style={{ display: "flex", alignItems: "center", justifyContent: "space-between", borderBottom: "1px solid var(--border-light)", padding: "16px 20px" }}>
+              <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+                <div style={{ width: "36px", height: "36px", borderRadius: "10px", background: "linear-gradient(135deg, #0D9488 0%, #0F766E 100%)", display: "grid", placeItems: "center", color: "#FFF" }}>
+                  <Copy size={18} />
+                </div>
+                <div>
+                  <strong id="vibecoder-modal-title" style={{ fontSize: "1.05rem", color: "var(--navy)", display: "block" }}>
+                    Master Prompt VibeCoder
+                  </strong>
+                  <span style={{ fontSize: "0.78rem", color: "var(--text-muted)" }}>
+                    Gabungan 4 Dokumen Lengkap + Roadmap Eksekusi Bertahap untuk AI Coding Tools
+                  </span>
+                </div>
+              </div>
+              <button
+                type="button"
+                className="btn-secondary"
+                style={{ minHeight: "28px", padding: "0 8px", fontSize: "0.74rem" }}
+                onClick={() => setShowVibeCoderModal(false)}
+              >
+                Tutup
+              </button>
+            </div>
+
+            <div style={{ padding: "16px 20px", overflowY: "auto", flex: 1 }}>
+              {/* Quick AI tool compatibility badges */}
+              <div style={{ background: "#F0FDFA", border: "1px solid #99F6E4", borderRadius: "10px", padding: "10px 14px", marginBottom: "12px", display: "flex", alignItems: "center", gap: "10px", flexWrap: "wrap" }}>
+                <span style={{ fontSize: "0.75rem", fontWeight: 750, color: "#0F766E" }}>
+                  💡 Cocok langsung untuk:
+                </span>
+                {["Claude Code", "Cursor Composer", "Windsurf Cascade", "GitHub Copilot", "Lovable", "v0", "Bolt.new"].map((tool) => (
+                  <span key={tool} style={{ fontSize: "0.7rem", fontWeight: 600, background: "#CCFBF1", color: "#115E59", padding: "2px 8px", borderRadius: "6px" }}>
+                    {tool}
+                  </span>
+                ))}
+              </div>
+
+              {/* Prompt Text Preview */}
+              <div style={{ position: "relative" }}>
+                <textarea
+                  readOnly
+                  value={generateVibeCoderPrompt(files, initialProjectName)}
+                  style={{
+                    width: "100%",
+                    height: "320px",
+                    fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
+                    fontSize: "0.78rem",
+                    lineHeight: "1.55",
+                    color: "var(--navy)",
+                    background: "#F8FAFC",
+                    border: "1px solid var(--border-light)",
+                    borderRadius: "10px",
+                    padding: "12px 14px",
+                    resize: "vertical",
+                  }}
+                />
+              </div>
+            </div>
+
+            <div className="studio-modal-footer" style={{ padding: "14px 20px", display: "flex", justifyContent: "space-between", alignItems: "center", borderTop: "1px solid var(--border-light)" }}>
+              <button
+                type="button"
+                className="btn-secondary"
+                style={{ fontSize: "0.78rem" }}
+                onClick={handleDownloadVibeCoderPrompt}
+              >
+                <Download size={14} /> Unduh VIBECODER-PROMPT.md
+              </button>
+
+              <div style={{ display: "flex", gap: "8px" }}>
+                <button
+                  type="button"
+                  className="btn-secondary"
+                  style={{ fontSize: "0.78rem" }}
+                  onClick={() => setShowVibeCoderModal(false)}
+                >
+                  Tutup
+                </button>
+                <button
+                  type="button"
+                  className="btn-primary"
+                  style={{
+                    background: "linear-gradient(135deg, #0D9488 0%, #0F766E 100%)",
+                    color: "#FFF",
+                    border: "none",
+                    fontSize: "0.8rem",
+                    padding: "0 16px",
+                    display: "inline-flex",
+                    alignItems: "center",
+                    gap: "6px",
+                  }}
+                  onClick={() => {
+                    void handleCopyVibeCoderPrompt();
+                    setShowVibeCoderModal(false);
+                  }}
+                >
+                  <Copy size={14} /> Salin Prompt
+                </button>
+              </div>
             </div>
           </div>
         </div>

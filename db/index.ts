@@ -149,6 +149,17 @@ async function ensureSchema(db: Client): Promise<void> {
       created_at TEXT NOT NULL,
       completed_at TEXT
     )`,
+    `CREATE TABLE IF NOT EXISTS generation_start_requests (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      user_email TEXT NOT NULL,
+      idempotency_key TEXT NOT NULL,
+      generation_id TEXT NOT NULL,
+      status TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      UNIQUE(user_email, idempotency_key),
+      UNIQUE(generation_id)
+    )`,
     `CREATE TABLE IF NOT EXISTS orders (
       id TEXT PRIMARY KEY,
       user_email TEXT NOT NULL,
@@ -236,6 +247,8 @@ async function ensureSchema(db: Client): Promise<void> {
     `CREATE TABLE IF NOT EXISTS project_document_revisions (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       revision_id TEXT NOT NULL UNIQUE,
+      revision_request_id TEXT,
+      revision_number INTEGER NOT NULL DEFAULT 1,
       user_email TEXT NOT NULL,
       project_id TEXT NOT NULL,
       document_type TEXT NOT NULL,
@@ -245,6 +258,18 @@ async function ensureSchema(db: Client): Promise<void> {
       instruction TEXT NOT NULL,
       scope TEXT NOT NULL,
       created_at TEXT NOT NULL
+    )`,
+    `CREATE TABLE IF NOT EXISTS project_revision_requests (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      user_email TEXT NOT NULL,
+      project_id TEXT NOT NULL,
+      request_id TEXT NOT NULL,
+      status TEXT NOT NULL,
+      saved_count INTEGER NOT NULL DEFAULT 0,
+      quality_report TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      UNIQUE(user_email, project_id, request_id)
     )`,
     `CREATE TABLE IF NOT EXISTS project_blueprints (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -257,6 +282,56 @@ async function ensureSchema(db: Client): Promise<void> {
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL,
       UNIQUE(user_email, project_id)
+    )`,
+    `CREATE TABLE IF NOT EXISTS generation_telemetry (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      generation_id TEXT NOT NULL UNIQUE,
+      user_email TEXT NOT NULL,
+      project_id TEXT,
+      quality_path TEXT,
+      final_status TEXT,
+      total_duration_ms INTEGER,
+      blueprint_ms INTEGER,
+      prd_ms INTEGER,
+      tech_stack_ms INTEGER,
+      ui_ux_ms INTEGER,
+      schema_ms INTEGER,
+      fast_gate_ms INTEGER,
+      targeted_repair_ms INTEGER,
+      alignment_ms INTEGER,
+      quality_gate_ms INTEGER,
+      targeted_repair_count INTEGER DEFAULT 0,
+      alignment_used INTEGER DEFAULT 0,
+      findings_count INTEGER DEFAULT 0,
+      findings_breakdown TEXT,
+      models_used TEXT,
+      fallback_count INTEGER DEFAULT 0,
+      provider_count INTEGER DEFAULT 0,
+      routing_version TEXT,
+      credit_result TEXT,
+      draft_ready_at TEXT,
+      finalized_at TEXT,
+      created_at TEXT NOT NULL
+    )`,
+    `CREATE TABLE IF NOT EXISTS provider_attempts (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      attempt_id TEXT NOT NULL UNIQUE,
+      generation_id TEXT NOT NULL,
+      stage TEXT NOT NULL,
+      operation_id TEXT,
+      provider TEXT NOT NULL,
+      model TEXT NOT NULL,
+      attempt INTEGER NOT NULL DEFAULT 1,
+      latency_ms INTEGER,
+      transport_success INTEGER NOT NULL DEFAULT 0,
+      semantic_status TEXT NOT NULL DEFAULT 'UNKNOWN',
+      http_status INTEGER,
+      fallback_reason_code TEXT,
+      fallback_reason_detail TEXT,
+      input_tokens INTEGER,
+      output_tokens INTEGER,
+      created_at TEXT NOT NULL,
+      UNIQUE(generation_id, stage, operation_id, attempt)
     )`,
     `CREATE TABLE IF NOT EXISTS webhook_events (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -288,6 +363,7 @@ async function ensureSchema(db: Client): Promise<void> {
     `CREATE INDEX IF NOT EXISTS idx_chat_messages_created ON chat_messages(created_at)`,
     `CREATE INDEX IF NOT EXISTS idx_users_updated_at ON users(updated_at)`,
     `CREATE INDEX IF NOT EXISTS idx_document_generations_user_status ON document_generations(user_email, status)`,
+    `CREATE INDEX IF NOT EXISTS idx_generation_start_requests_user_key ON generation_start_requests(user_email, idempotency_key)`,
     `CREATE INDEX IF NOT EXISTS idx_orders_user_status ON orders(user_email, status)`,
     `CREATE INDEX IF NOT EXISTS idx_audit_logs_order_id ON audit_logs(order_id)`,
     `CREATE INDEX IF NOT EXISTS idx_verified_transactions_trx ON verified_transactions(provider, transaction_id)`,
@@ -295,13 +371,22 @@ async function ensureSchema(db: Client): Promise<void> {
     `CREATE INDEX IF NOT EXISTS idx_credit_reservations_user ON credit_reservations(user_email, status)`,
     `CREATE INDEX IF NOT EXISTS idx_project_docs_user_project ON project_documents(user_email, project_id, document_type)`,
     `CREATE INDEX IF NOT EXISTS idx_project_doc_revisions_project ON project_document_revisions(user_email, project_id, created_at)`,
+    `CREATE INDEX IF NOT EXISTS idx_project_doc_revisions_request ON project_document_revisions(user_email, project_id, revision_request_id)`,
+    `CREATE INDEX IF NOT EXISTS idx_project_revision_requests_project ON project_revision_requests(user_email, project_id, created_at)`,
     `CREATE INDEX IF NOT EXISTS idx_project_blueprints_user_project ON project_blueprints(user_email, project_id)`,
+    `CREATE INDEX IF NOT EXISTS idx_generation_telemetry_user ON generation_telemetry(user_email, created_at)`,
+    `CREATE INDEX IF NOT EXISTS idx_generation_telemetry_quality_path ON generation_telemetry(quality_path)`,
+    `CREATE INDEX IF NOT EXISTS idx_provider_attempts_generation ON provider_attempts(generation_id, stage)`,
+    `CREATE INDEX IF NOT EXISTS idx_provider_attempts_provider ON provider_attempts(provider, model, created_at)`,
     `CREATE UNIQUE INDEX IF NOT EXISTS uq_audit_sequence ON audit_logs(sequence)`,
     `CREATE UNIQUE INDEX IF NOT EXISTS uq_credit_payment_order ON credit_transactions(order_id, type) WHERE order_id IS NOT NULL`,
     `CREATE UNIQUE INDEX IF NOT EXISTS uq_webhook_event ON webhook_events(provider, external_event_id)`,
     `ALTER TABLE users ADD COLUMN device_fingerprint TEXT`,
     `ALTER TABLE project_documents ADD COLUMN project_name TEXT DEFAULT ''`,
     `ALTER TABLE project_documents ADD COLUMN selected_model TEXT DEFAULT ''`,
+    `ALTER TABLE project_document_revisions ADD COLUMN revision_request_id TEXT`,
+    `ALTER TABLE project_document_revisions ADD COLUMN revision_number INTEGER NOT NULL DEFAULT 1`,
+    `CREATE INDEX IF NOT EXISTS idx_project_doc_revisions_request ON project_document_revisions(user_email, project_id, revision_request_id)`,
   ];
 
   for (const sql of statements) {
@@ -1340,6 +1425,324 @@ export async function settleGenerationCredits(
   }
 }
 
+// ─── Generation Telemetry ─────────────────────────────────────────
+
+export type GenerationTelemetryData = {
+  generationId: string;
+  userEmail: string;
+  projectId?: string;
+  qualityPath?: string;
+  finalStatus?: string;
+  totalDurationMs?: number;
+  blueprintMs?: number;
+  prdMs?: number;
+  techStackMs?: number;
+  uiUxMs?: number;
+  schemaMs?: number;
+  fastGateMs?: number;
+  targetedRepairMs?: number;
+  alignmentMs?: number;
+  qualityGateMs?: number;
+  targetedRepairCount?: number;
+  alignmentUsed?: boolean;
+  findingsCount?: number;
+  findingsBreakdown?: Record<string, number>;
+  modelsUsed?: Record<string, unknown>;
+  fallbackCount?: number;
+  providerCount?: number;
+  routingVersion?: string;
+  creditResult?: string;
+  draftReadyAt?: string;
+  finalizedAt?: string;
+};
+
+export async function storeGenerationTelemetry(
+  db: Client,
+  data: GenerationTelemetryData,
+): Promise<void> {
+  const now = new Date().toISOString();
+  console.log(`[TELEMETRY_STORE] storeGenerationTelemetry called gen=${data.generationId} creditResult=${data.creditResult} draftReadyAt=${data.draftReadyAt} routingVersion=${data.routingVersion} providerCount=${data.providerCount}`);
+  // Server-authoritative fields use COALESCE: only overwrite if new value is non-null.
+  // This prevents client fire-and-forget telemetry from overwriting credit_result,
+  // draft_ready_at, and finalized_at set by quality-gate/finish endpoints.
+  await db.execute({
+    sql: `INSERT INTO generation_telemetry (
+      generation_id, user_email, project_id, quality_path, final_status,
+      total_duration_ms, blueprint_ms, prd_ms, tech_stack_ms, ui_ux_ms, schema_ms,
+      fast_gate_ms, targeted_repair_ms, alignment_ms, quality_gate_ms,
+      targeted_repair_count, alignment_used, findings_count, findings_breakdown,
+      models_used, fallback_count, provider_count, routing_version,
+      credit_result, draft_ready_at, finalized_at, created_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ON CONFLICT(generation_id) DO UPDATE SET
+      quality_path = excluded.quality_path,
+      final_status = excluded.final_status,
+      total_duration_ms = excluded.total_duration_ms,
+      blueprint_ms = excluded.blueprint_ms,
+      prd_ms = excluded.prd_ms,
+      tech_stack_ms = excluded.tech_stack_ms,
+      ui_ux_ms = excluded.ui_ux_ms,
+      schema_ms = excluded.schema_ms,
+      fast_gate_ms = excluded.fast_gate_ms,
+      targeted_repair_ms = excluded.targeted_repair_ms,
+      alignment_ms = excluded.alignment_ms,
+      quality_gate_ms = excluded.quality_gate_ms,
+      targeted_repair_count = excluded.targeted_repair_count,
+      alignment_used = excluded.alignment_used,
+      findings_count = excluded.findings_count,
+      findings_breakdown = excluded.findings_breakdown,
+      models_used = excluded.models_used,
+      fallback_count = excluded.fallback_count,
+      provider_count = excluded.provider_count,
+      routing_version = excluded.routing_version,
+      credit_result = COALESCE(excluded.credit_result, generation_telemetry.credit_result),
+      draft_ready_at = COALESCE(excluded.draft_ready_at, generation_telemetry.draft_ready_at),
+      finalized_at = COALESCE(excluded.finalized_at, generation_telemetry.finalized_at)`,
+    args: [
+      data.generationId,
+      data.userEmail.trim().toLowerCase(),
+      data.projectId || null,
+      data.qualityPath || null,
+      data.finalStatus || null,
+      data.totalDurationMs ?? null,
+      data.blueprintMs ?? null,
+      data.prdMs ?? null,
+      data.techStackMs ?? null,
+      data.uiUxMs ?? null,
+      data.schemaMs ?? null,
+      data.fastGateMs ?? null,
+      data.targetedRepairMs ?? null,
+      data.alignmentMs ?? null,
+      data.qualityGateMs ?? null,
+      data.targetedRepairCount ?? 0,
+      data.alignmentUsed ? 1 : 0,
+      data.findingsCount ?? 0,
+      data.findingsBreakdown ? JSON.stringify(data.findingsBreakdown) : null,
+      data.modelsUsed ? JSON.stringify(data.modelsUsed) : null,
+      data.fallbackCount ?? 0,
+      data.providerCount ?? null,
+      data.routingVersion ?? null,
+      data.creditResult || null,
+      data.draftReadyAt || null,
+      data.finalizedAt || null,
+      now,
+    ],
+  });
+  console.log(`[TELEMETRY_STORE] storeGenerationTelemetry UPSERT completed gen=${data.generationId}`);
+}
+
+export async function updateGenerationTelemetry(
+  db: Client,
+  generationId: string,
+  updates: Partial<Pick<GenerationTelemetryData, "creditResult" | "draftReadyAt" | "finalizedAt" | "qualityPath" | "finalStatus">>,
+  userEmail?: string,
+): Promise<void> {
+  const setClauses: string[] = [];
+  const args: (string | number | null)[] = [];
+  if (updates.creditResult !== undefined) { setClauses.push("credit_result = ?"); args.push(updates.creditResult); }
+  if (updates.draftReadyAt !== undefined) { setClauses.push("draft_ready_at = ?"); args.push(updates.draftReadyAt); }
+  if (updates.finalizedAt !== undefined) { setClauses.push("finalized_at = ?"); args.push(updates.finalizedAt); }
+  if (updates.qualityPath !== undefined) { setClauses.push("quality_path = ?"); args.push(updates.qualityPath); }
+  if (updates.finalStatus !== undefined) { setClauses.push("final_status = ?"); args.push(updates.finalStatus); }
+  if (setClauses.length === 0) return;
+
+  console.log(`[TELEMETRY_UPDATE] updateGenerationTelemetry called gen=${generationId} updates=${JSON.stringify(updates)} user=${userEmail}`);
+
+  // Try UPDATE first (row should exist from hook's telemetry UPSERT)
+  const updateArgs = [...args, generationId];
+  const result = await db.execute({
+    sql: `UPDATE generation_telemetry SET ${setClauses.join(", ")} WHERE generation_id = ?`,
+    args: updateArgs,
+  });
+
+  console.log(`[TELEMETRY_UPDATE] UPDATE result gen=${generationId} rowsAffected=${result.rowsAffected}`);
+
+  // If row doesn't exist yet (race: quality gate runs before hook's UPSERT),
+  // create it with UPSERT so server-authoritative fields are not lost.
+  if (result.rowsAffected === 0 && userEmail) {
+    console.log(`[TELEMETRY_UPDATE] Row not found, doing UPSERT fallback gen=${generationId}`);
+    const now = new Date().toISOString();
+    const columns = ["generation_id", "user_email", "created_at"];
+    const placeholders = ["?", "?", "?"];
+    const upsertArgs: (string | number | null)[] = [generationId, userEmail.trim().toLowerCase(), now];
+    for (const [key, value] of Object.entries(updates)) {
+      const col = key.replace(/([A-Z])/g, "_$1").toLowerCase();
+      columns.push(col);
+      placeholders.push("?");
+      upsertArgs.push(value as string);
+    }
+    await db.execute({
+      sql: `INSERT INTO generation_telemetry (${columns.join(", ")}) VALUES (${placeholders.join(", ")})
+        ON CONFLICT(generation_id) DO UPDATE SET ${setClauses.join(", ")}`,
+      args: [...upsertArgs, ...args],
+    });
+    console.log(`[TELEMETRY_UPDATE] UPSERT fallback completed gen=${generationId}`);
+  }
+}
+
+export type ProviderAttemptData = {
+  generationId: string;
+  stage: string;
+  operationId?: string;
+  provider: string;
+  model: string;
+  attempt?: number;
+  latencyMs?: number;
+  transportSuccess: boolean;
+  semanticStatus?: "UNKNOWN" | "SUCCESS" | "FAILED";
+  httpStatus?: number;
+  fallbackReasonCode?: string;
+  fallbackReasonDetail?: string;
+  inputTokens?: number;
+  outputTokens?: number;
+};
+
+export function classifyFallbackReason(
+  httpStatus: number,
+  errorBody: string,
+): { code: string; detail: string } {
+  const lower = errorBody.toLowerCase();
+  if (httpStatus === 429 || lower.includes("rate limit") || lower.includes("too many requests")) {
+    return { code: "RATE_LIMITED", detail: errorBody };
+  }
+  if (httpStatus === 503 || lower.includes("overloaded")) {
+    return { code: "PROVIDER_5XX", detail: errorBody };
+  }
+  if (httpStatus === 500 || httpStatus === 502) {
+    return { code: "PROVIDER_5XX", detail: errorBody };
+  }
+  if (httpStatus === 404 || lower.includes("model_not_found") || lower.includes("does not exist")) {
+    return { code: "MODEL_UNAVAILABLE", detail: errorBody };
+  }
+  if (httpStatus === 408 || lower.includes("timeout")) {
+    return { code: "TIMEOUT", detail: errorBody };
+  }
+  if (httpStatus === 403) {
+    return { code: "PROVIDER_AUTH_FAILED", detail: errorBody };
+  }
+  if (lower.includes("insufficient_quota") || lower.includes("balance")) {
+    return { code: "QUOTA_EXCEEDED", detail: errorBody };
+  }
+  return { code: "PROVIDER_ERROR", detail: errorBody };
+}
+
+export async function storeProviderAttempt(
+  db: Client,
+  data: ProviderAttemptData,
+  preGeneratedAttemptId?: string,
+): Promise<string> {
+  const attemptId = preGeneratedAttemptId || `pat_${crypto.randomUUID()}`;
+  const now = new Date().toISOString();
+  await db.execute({
+    sql: `INSERT INTO provider_attempts (
+      attempt_id, generation_id, stage, operation_id, provider, model, attempt,
+      latency_ms, transport_success, semantic_status,
+      http_status, fallback_reason_code, fallback_reason_detail,
+      input_tokens, output_tokens, created_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ON CONFLICT(generation_id, stage, operation_id, attempt) DO UPDATE SET
+      attempt_id = excluded.attempt_id,
+      provider = excluded.provider,
+      model = excluded.model,
+      latency_ms = excluded.latency_ms,
+      transport_success = excluded.transport_success,
+      semantic_status = excluded.semantic_status,
+      http_status = excluded.http_status,
+      fallback_reason_code = excluded.fallback_reason_code,
+      fallback_reason_detail = excluded.fallback_reason_detail,
+      input_tokens = excluded.input_tokens,
+      output_tokens = excluded.output_tokens`,
+    args: [
+      attemptId,
+      data.generationId,
+      data.stage,
+      data.operationId || null,
+      data.provider,
+      data.model,
+      data.attempt || 1,
+      data.latencyMs || null,
+      data.transportSuccess ? 1 : 0,
+      data.semanticStatus || "UNKNOWN",
+      data.httpStatus || null,
+      data.fallbackReasonCode || null,
+      data.fallbackReasonDetail || null,
+      data.inputTokens || null,
+      data.outputTokens || null,
+      now,
+    ],
+  });
+  return attemptId;
+}
+
+export async function updateProviderAttemptResult(
+  db: Client,
+  attemptId: string,
+  data: Pick<ProviderAttemptData, "provider" | "model" | "latencyMs" | "transportSuccess" | "httpStatus" | "fallbackReasonCode" | "fallbackReasonDetail">,
+): Promise<void> {
+  await db.execute({
+    sql: `UPDATE provider_attempts SET
+      provider = ?, model = ?, latency_ms = ?,
+      transport_success = ?, http_status = ?,
+      fallback_reason_code = COALESCE(?, fallback_reason_code),
+      fallback_reason_detail = COALESCE(?, fallback_reason_detail)
+    WHERE attempt_id = ?`,
+    args: [
+      data.provider,
+      data.model,
+      data.latencyMs || null,
+      data.transportSuccess ? 1 : 0,
+      data.httpStatus || null,
+      data.fallbackReasonCode || null,
+      data.fallbackReasonDetail || null,
+      attemptId,
+    ],
+  });
+}
+
+export async function updateProviderAttemptSemantic(
+  db: Client,
+  attemptId: string,
+  semanticStatus: "SUCCESS" | "FAILED",
+  failureCode?: string,
+): Promise<{ updated: boolean }> {
+  // Transition guard: only UNKNOWN → SUCCESS/FAILED is allowed.
+  // Same-state transitions (SUCCESS→SUCCESS, FAILED→FAILED) are no-ops (idempotent).
+  // Cross-state transitions (SUCCESS→FAILED, FAILED→SUCCESS) are blocked.
+  const result = await db.execute({
+    sql: `UPDATE provider_attempts
+      SET semantic_status = ?,
+          fallback_reason_code = CASE
+            WHEN ? = 'FAILED' THEN COALESCE(?, fallback_reason_code)
+            ELSE fallback_reason_code
+          END
+      WHERE attempt_id = ?
+        AND semantic_status = 'UNKNOWN'`,
+    args: [semanticStatus, semanticStatus, failureCode || null, attemptId],
+  });
+  return { updated: (result.rowsAffected ?? 0) > 0 };
+}
+
+/**
+ * Last-resort terminal reconciliation. The browser normally reports every
+ * semantic outcome, but a tab can disconnect after an HTTP-successful stream.
+ * A terminal generation must never retain an UNKNOWN attempt.
+ */
+export async function reconcileTerminalProviderAttempts(
+  db: Client,
+  generationId: string,
+): Promise<number> {
+  const result = await db.execute({
+    sql: `UPDATE provider_attempts
+      SET semantic_status = 'FAILED',
+          fallback_reason_code = 'SEMANTIC_OUTCOME_MISSING'
+      WHERE generation_id = ?
+        AND transport_success = 1
+        AND semantic_status = 'UNKNOWN'`,
+    args: [generationId],
+  });
+  return result.rowsAffected ?? 0;
+}
+
 // ─── Hidden Canonical Blueprint / Quality Gate ─────────────────────
 
 export async function saveProjectBlueprint(
@@ -1398,6 +1801,28 @@ export async function updateProjectBlueprintQuality(
   });
 }
 
+export async function updateProjectBlueprintQualityByProject(
+  db: Client,
+  {
+    userEmail,
+    projectId,
+    qualityReport,
+    qualityStatus,
+  }: {
+    userEmail: string;
+    projectId: string;
+    qualityReport: string;
+    qualityStatus: "PASSED" | "FAILED";
+  },
+): Promise<void> {
+  await db.execute({
+    sql: `UPDATE project_blueprints
+      SET quality_report = ?, quality_status = ?, updated_at = ?
+      WHERE LOWER(user_email) = LOWER(?) AND project_id = ?`,
+    args: [qualityReport, qualityStatus, new Date().toISOString(), userEmail.trim(), projectId],
+  });
+}
+
 // ─── Project Documents ──────────────────────────────────────────────
 
 export async function saveProjectDocument(
@@ -1431,31 +1856,112 @@ export async function saveProjectDocument(
   });
 }
 
-export async function saveProjectDocumentRevision(
+/** Save generated documents as recoverable drafts when final validation fails. */
+export async function saveProjectDocumentDrafts(
   db: Client,
   {
     userEmail,
     projectId,
-    instruction,
-    scope,
+    projectName = "",
+    selectedModel = "",
     documents,
   }: {
     userEmail: string;
     projectId: string;
-    instruction: string;
-    scope: "document" | "related";
+    projectName?: string;
+    selectedModel?: string;
     documents: Array<{
       documentType: "PRD" | "TECH_SPEC" | "UI_UX" | "AI_CONTEXT";
       fileName: string;
       content: string;
     }>;
   },
-): Promise<{ saved: number }> {
+): Promise<void> {
   const normEmail = userEmail.trim().toLowerCase();
   const now = new Date().toISOString();
   const tx = await db.transaction("write");
 
   try {
+    for (const document of documents) {
+      await tx.execute({
+        sql: `INSERT INTO project_documents (user_email, project_id, project_name, selected_model, document_type, file_name, content, status, created_at, updated_at)
+          VALUES (?, ?, ?, ?, ?, ?, ?, 'DRAFT', ?, ?)
+          ON CONFLICT(user_email, project_id, document_type) DO UPDATE SET
+            project_name = CASE WHEN excluded.project_name != '' THEN excluded.project_name ELSE project_documents.project_name END,
+            selected_model = CASE WHEN excluded.selected_model != '' THEN excluded.selected_model ELSE project_documents.selected_model END,
+            file_name = excluded.file_name,
+            content = excluded.content,
+            status = 'DRAFT',
+            updated_at = excluded.updated_at`,
+        args: [normEmail, projectId, projectName, selectedModel, document.documentType, document.fileName, document.content, now, now],
+      });
+    }
+    await tx.commit();
+  } catch (error) {
+    await tx.rollback();
+    throw error;
+  }
+}
+
+export async function markProjectDocumentsCompleted(
+  db: Client,
+  { userEmail, projectId }: { userEmail: string; projectId: string },
+): Promise<void> {
+  await db.execute({
+    sql: `UPDATE project_documents
+      SET status = 'COMPLETED', updated_at = ?
+      WHERE LOWER(user_email) = LOWER(?) AND project_id = ?`,
+    args: [new Date().toISOString(), userEmail.trim(), projectId],
+  });
+}
+
+export async function saveProjectDocumentRevision(
+  db: Client,
+  {
+    userEmail,
+    projectId,
+    revisionRequestId,
+    instruction,
+    scope,
+    documents,
+    qualityReport,
+  }: {
+    userEmail: string;
+    projectId: string;
+    revisionRequestId: string;
+    instruction: string;
+    scope: "document" | "related";
+    qualityReport: string;
+    documents: Array<{
+      documentType: "PRD" | "TECH_SPEC" | "UI_UX" | "AI_CONTEXT";
+      fileName: string;
+      content: string;
+    }>;
+  },
+): Promise<{ saved: number; replayed: boolean }> {
+  const normEmail = userEmail.trim().toLowerCase();
+  const now = new Date().toISOString();
+  let qualityStatus = "FAILED";
+  try {
+    const parsedReport = JSON.parse(qualityReport) as { passed?: unknown };
+    qualityStatus = parsedReport.passed === true ? "PASSED" : "FAILED";
+  } catch {
+    // A malformed report must never make a revision appear fully validated.
+  }
+  const tx = await db.transaction("write");
+
+  try {
+    const existingRequest = await tx.execute({
+      sql: `SELECT saved_count FROM project_revision_requests
+        WHERE LOWER(user_email) = LOWER(?) AND project_id = ? AND request_id = ?`,
+      args: [normEmail, projectId, revisionRequestId],
+    });
+    const existing = existingRequest.rows[0] as { saved_count?: number } | undefined;
+    if (existing) {
+      await tx.rollback();
+      return { saved: Number(existing.saved_count) || 0, replayed: true };
+    }
+
     let saved = 0;
     for (const document of documents) {
       const currentResult = await tx.execute({
@@ -1469,13 +1975,23 @@ export async function saveProjectDocumentRevision(
       }
       if (current.content === document.content) continue;
 
+      const versionResult = await tx.execute({
+        sql: `SELECT COALESCE(MAX(revision_number), 1) AS latest_version
+          FROM project_document_revisions
+          WHERE LOWER(user_email) = LOWER(?) AND project_id = ? AND document_type = ?`,
+        args: [normEmail, projectId, document.documentType],
+      });
+      const revisionNumber = Math.max(1, Number(versionResult.rows[0]?.latest_version ?? 1)) + 1;
+
       await tx.execute({
         sql: `INSERT INTO project_document_revisions (
-          revision_id, user_email, project_id, document_type, file_name,
+          revision_id, revision_request_id, revision_number, user_email, project_id, document_type, file_name,
           previous_content, revised_content, instruction, scope, created_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         args: [
           randomBytes(16).toString("hex"),
+          revisionRequestId,
+          revisionNumber,
           normEmail,
           projectId,
           document.documentType,
@@ -1495,10 +2011,42 @@ export async function saveProjectDocumentRevision(
       });
       saved += 1;
     }
+
+    // The same database transaction promotes the complete set and records the
+    // Quality Gate result. A refresh cannot observe half-applied revisions.
+    await tx.execute({
+      sql: `UPDATE project_documents
+        SET status = 'COMPLETED', updated_at = ?
+        WHERE LOWER(user_email) = LOWER(?) AND project_id = ?`,
+      args: [now, normEmail, projectId],
+    });
+    await tx.execute({
+      sql: `UPDATE project_blueprints
+        SET quality_report = ?, quality_status = ?, updated_at = ?
+        WHERE LOWER(user_email) = LOWER(?) AND project_id = ?`,
+      args: [qualityReport, qualityStatus, now, normEmail, projectId],
+    });
+    await tx.execute({
+      sql: `INSERT INTO project_revision_requests (
+        user_email, project_id, request_id, status, saved_count, quality_report, created_at, updated_at
+      ) VALUES (?, ?, ?, 'COMPLETED', ?, ?, ?, ?)`,
+      args: [normEmail, projectId, revisionRequestId, saved, qualityReport, now, now],
+    });
+
     await tx.commit();
-    return { saved };
+    return { saved, replayed: false };
   } catch (error) {
     await tx.rollback();
+    // A parallel retry can commit first. Read its result rather than creating a
+    // duplicate history entry or returning a spurious duplicate-key error.
+    const existing = await db.execute({
+      sql: `SELECT saved_count FROM project_revision_requests
+        WHERE LOWER(user_email) = LOWER(?) AND project_id = ? AND request_id = ?`,
+      args: [normEmail, projectId, revisionRequestId],
+    });
+    if (existing.rows[0]) {
+      return { saved: Number(existing.rows[0]?.saved_count) || 0, replayed: true };
+    }
     throw error;
   }
 }
@@ -1599,7 +2147,7 @@ export async function getProjectDocuments(
   db: Client,
   userEmail: string,
   projectId: string,
-): Promise<{ projectName: string; selectedModel: string; documents: ProjectDocument[] }> {
+): Promise<{ projectName: string; selectedModel: string; documents: ProjectDocument[]; qualityStatus: string | null; qualityReport: string | null }> {
   const normEmail = userEmail.trim().toLowerCase();
 
   const meta = await db.execute({
@@ -1615,6 +2163,12 @@ export async function getProjectDocuments(
     args: [normEmail, projectId],
   });
 
+  const quality = await db.execute({
+    sql: `SELECT quality_status, quality_report FROM project_blueprints
+      WHERE LOWER(user_email) = LOWER(?) AND project_id = ? LIMIT 1`,
+    args: [normEmail, projectId],
+  });
+
   return {
     projectName: (meta.rows[0]?.project_name as string) || "",
     selectedModel: (meta.rows[0]?.selected_model as string) || "",
@@ -1624,5 +2178,7 @@ export async function getProjectDocuments(
       content: row.content as string,
       status: row.status as string,
     })),
+    qualityStatus: (quality.rows[0]?.quality_status as string | undefined) ?? null,
+    qualityReport: (quality.rows[0]?.quality_report as string | undefined) ?? null,
   };
 }

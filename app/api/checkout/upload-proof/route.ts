@@ -12,7 +12,7 @@ import {
   generateRequestId,
 } from "@/lib/errors";
 
-const PROVIDER_BASE_URL = "https://bandelbanget.xyz/v1";
+const PROVIDER_BASE_URL = process.env.INVIBUILDER_BASE_URL || "https://api.invibuilder.com/api/v1";
 const EXPECTED_MERCHANT_NAME = "Jasa pembuatan websi...";
 const EXPECTED_NMID = "ID1026479441309";
 const EXPECTED_AMOUNT = 20000;
@@ -142,7 +142,7 @@ export async function POST(request: NextRequest) {
       notes: "Gambar bukti disimpan. Menunggu verifikasi mutasi riil dari Admin.",
     };
 
-    const apiKey = process.env.BANDELBANGET_API_KEY;
+    const apiKey = process.env.INVIBUILDER_API_KEY;
     if (apiKey) {
       try {
         const prompt = `Anda adalah asisten ekstraksi data gambar bukti transfer/struk pembayaran QRIS di Indonesia.

@@ -8,6 +8,7 @@ export type RevisionImpact = {
 };
 
 export type RevisionPreview = {
+  revisionRequestId: string;
   instruction: string;
   scope: RevisionScope;
   impact: RevisionImpact;

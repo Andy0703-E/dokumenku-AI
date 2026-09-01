@@ -20,9 +20,12 @@ export type GenerationStage =
   | "tech-stack"
   | "ui-ux"
   | "schema"
-  | "revision";
+  | "revision"
+  | "quality-repair"
+  | "targeted-repair"
+  | "alignment";
 
-export const ROUTING_VERSION = "1.0.0";
+export const ROUTING_VERSION = "1.0.1";
 
 // ── Per-Stage Model Preferences ────────────────────────────────────────────
 // Higher weight = more important for that stage.
@@ -39,105 +42,138 @@ type StagePreference = {
   avoidPenalty: number;
 };
 
+const STAGE_PATTERNS = {
+  promo05: /promo:05$/i,
+  promo05Repair: /promo:05-repair$/i,
+  stepFlash: /sf\/step-3\.[57]-flash/i,
+  step35Flash: /sf\/step-3\.5-flash$/i,
+  step35Flash2603: /sf\/step-3\.5-flash-2603/i,
+  step37Flash: /sf\/step-3\.7-flash$/i,
+};
+
 const STAGE_PREFERENCES: Record<GenerationStage, StagePreference> = {
   blueprint: {
     preferredPatterns: [
-      /glm-5/i,
-      /claude-sonnet/i,
-      /gpt-4o(?!-mini)/i,
-      /gemini-pro/i,
-      /deepseek-v4-pro/i,
+      STAGE_PATTERNS.promo05,
+      STAGE_PATTERNS.step35Flash,
+      STAGE_PATTERNS.step35Flash2603,
+      STAGE_PATTERNS.step37Flash,
     ],
-    avoidPatterns: [
-      /flash/i,
-      /mini/i,
-      /haiku/i,
-      /lite/i,
-    ],
-    preferredBonus: 20,
-    avoidPenalty: 30,
+    avoidPatterns: [],
+    preferredBonus: 30,
+    avoidPenalty: 0,
   },
   prd: {
     preferredPatterns: [
-      /claude-opus/i,
-      /claude-sonnet/i,
-      /gpt-5/i,
-      /deepseek-r1/i,
-      /deepseek-reasoner/i,
-      /glm-5/i,
+      STAGE_PATTERNS.promo05,
+      STAGE_PATTERNS.step35Flash,
+      STAGE_PATTERNS.step35Flash2603,
+      STAGE_PATTERNS.step37Flash,
     ],
-    avoidPatterns: [
-      /flash/i,
-      /mini/i,
-      /haiku/i,
-    ],
-    preferredBonus: 25,
-    avoidPenalty: 30,
+    avoidPatterns: [],
+    preferredBonus: 30,
+    avoidPenalty: 0,
   },
   "tech-stack": {
     preferredPatterns: [
-      /claude-sonnet/i,
-      /deepseek-v4-pro/i,
-      /qwen/i,
-      /gpt-4o(?!-mini)/i,
-      /glm-5/i,
+      STAGE_PATTERNS.promo05,
+      STAGE_PATTERNS.step35Flash,
+      STAGE_PATTERNS.step35Flash2603,
+      STAGE_PATTERNS.step37Flash,
     ],
-    avoidPatterns: [
-      /flash/i,
-      /mini/i,
-      /haiku/i,
-    ],
-    preferredBonus: 20,
-    avoidPenalty: 25,
+    avoidPatterns: [],
+    preferredBonus: 30,
+    avoidPenalty: 0,
   },
   "ui-ux": {
     preferredPatterns: [
-      /claude-fable/i,
-      /fable/i,
-      /gemini-pro/i,
-      /claude-sonnet/i,
-      /gpt-4o(?!-mini)/i,
+      STAGE_PATTERNS.promo05,
+      STAGE_PATTERNS.step35Flash,
+      STAGE_PATTERNS.step35Flash2603,
+      STAGE_PATTERNS.step37Flash,
     ],
-    avoidPatterns: [
-      /flash/i,
-      /mini/i,
-      /haiku/i,
-    ],
-    preferredBonus: 20,
-    avoidPenalty: 25,
+    avoidPatterns: [],
+    preferredBonus: 30,
+    avoidPenalty: 0,
   },
   schema: {
     preferredPatterns: [
-      /claude-sonnet/i,
-      /deepseek-v4-pro/i,
-      /glm-5/i,
-      /gpt-4o(?!-mini)/i,
-      /qwen/i,
+      STAGE_PATTERNS.promo05,
+      STAGE_PATTERNS.step35Flash,
+      STAGE_PATTERNS.step35Flash2603,
+      STAGE_PATTERNS.step37Flash,
     ],
-    avoidPatterns: [
-      /flash/i,
-      /mini/i,
-      /haiku/i,
-    ],
-    preferredBonus: 20,
-    avoidPenalty: 25,
+    avoidPatterns: [],
+    preferredBonus: 30,
+    avoidPenalty: 0,
   },
   revision: {
     preferredPatterns: [
-      /claude-sonnet/i,
-      /glm-5/i,
-      /gpt-4o(?!-mini)/i,
-      /deepseek-v4-pro/i,
+      STAGE_PATTERNS.promo05,
+      STAGE_PATTERNS.step35Flash,
+      STAGE_PATTERNS.step35Flash2603,
+      STAGE_PATTERNS.step37Flash,
     ],
-    avoidPatterns: [
-      /flash/i,
-      /mini/i,
-      /haiku/i,
+    avoidPatterns: [],
+    preferredBonus: 30,
+    avoidPenalty: 0,
+  },
+  "quality-repair": {
+    preferredPatterns: [
+      STAGE_PATTERNS.promo05Repair,
+      STAGE_PATTERNS.step37Flash,
+      STAGE_PATTERNS.step35Flash2603,
+      STAGE_PATTERNS.step35Flash,
     ],
-    preferredBonus: 15,
-    avoidPenalty: 20,
+    avoidPatterns: [],
+    preferredBonus: 30,
+    avoidPenalty: 0,
+  },
+  "targeted-repair": {
+    preferredPatterns: [
+      STAGE_PATTERNS.promo05Repair,
+      STAGE_PATTERNS.step37Flash,
+      STAGE_PATTERNS.step35Flash2603,
+      STAGE_PATTERNS.step35Flash,
+    ],
+    avoidPatterns: [],
+    preferredBonus: 30,
+    avoidPenalty: 0,
+  },
+  alignment: {
+    preferredPatterns: [
+      STAGE_PATTERNS.promo05Repair,
+      STAGE_PATTERNS.step37Flash,
+      STAGE_PATTERNS.step35Flash2603,
+      STAGE_PATTERNS.step35Flash,
+    ],
+    avoidPatterns: [],
+    preferredBonus: 30,
+    avoidPenalty: 0,
   },
 };
+
+// Fast models are used for the first, high-volume pass. The explicit order
+// makes routing predictable even before this server has enough latency data.
+// A pattern may match with or without a provider prefix (e.g. a1/glm-5.1).
+const STAGE_MODEL_PRIORITY: Record<GenerationStage, RegExp[]> = {
+  // Main docs: prefer promo:05 and step-3.5-flash
+  blueprint: [/promo:05$/i, /sf\/step-3\.5-flash$/i, /sf\/step-3\.5-flash-2603$/i, /sf\/step-3\.7-flash$/i],
+  prd: [/promo:05$/i, /sf\/step-3\.5-flash$/i, /sf\/step-3\.5-flash-2603$/i, /sf\/step-3\.7-flash$/i],
+  "tech-stack": [/promo:05$/i, /sf\/step-3\.5-flash$/i, /sf\/step-3\.5-flash-2603$/i, /sf\/step-3\.7-flash$/i],
+  "ui-ux": [/promo:05$/i, /sf\/step-3\.5-flash$/i, /sf\/step-3\.5-flash-2603$/i, /sf\/step-3\.7-flash$/i],
+  schema: [/promo:05$/i, /sf\/step-3\.5-flash$/i, /sf\/step-3\.5-flash-2603$/i, /sf\/step-3\.7-flash$/i],
+  revision: [/promo:05$/i, /sf\/step-3\.5-flash$/i, /sf\/step-3\.5-flash-2603$/i, /sf\/step-3\.7-flash$/i],
+  // Repair/Alignment: prefer promo:05-repair then step-3.7-flash
+  "quality-repair": [/promo:05-repair$/i, /sf\/step-3\.7-flash$/i, /sf\/step-3\.5-flash-2603$/i, /sf\/step-3\.5-flash$/i],
+  "targeted-repair": [/promo:05-repair$/i, /sf\/step-3\.7-flash$/i, /sf\/step-3\.5-flash-2603$/i, /sf\/step-3\.5-flash$/i],
+  alignment: [/promo:05-repair$/i, /sf\/step-3\.7-flash$/i, /sf\/step-3\.5-flash-2603$/i, /sf\/step-3\.5-flash$/i],
+};
+
+function getStagePriority(modelId: string, stage: GenerationStage): number {
+  const priority = STAGE_MODEL_PRIORITY[stage].findIndex((pattern) => pattern.test(modelId));
+  return priority === -1 ? Number.MAX_SAFE_INTEGER : priority;
+}
 
 // ── In-Memory Model Performance Stats ──────────────────────────────────────
 
@@ -340,7 +376,10 @@ export function resolveModelForStage(
     score: scoreModel(m, stage, userTier),
   }));
 
-  scored.sort((a, b) => b.score - a.score);
+  scored.sort((a, b) => {
+    const priorityDelta = getStagePriority(a.model.id, stage) - getStagePriority(b.model.id, stage);
+    return priorityDelta || b.score - a.score;
+  });
 
   // Build fallback chain: top 3 scored models
   const chain: ResolvedModel[] = scored.slice(0, 3).map((s, i) => ({
@@ -400,6 +439,7 @@ export type ModelUsedRecord = {
   attempts: number;
   fallbackUsed: boolean;
   finalStatus: "success" | "fallback" | "failed";
+  attemptId?: string;
 };
 
 export type ModelsUsedMap = Partial<Record<GenerationStage, ModelUsedRecord>>;

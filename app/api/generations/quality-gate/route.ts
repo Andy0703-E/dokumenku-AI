@@ -3,18 +3,23 @@ import { NextRequest, NextResponse } from "next/server";
 import {
   executeAtomicDocumentFinalization,
   getDatabase,
+  reconcileTerminalProviderAttempts,
+  saveProjectDocumentDrafts,
   saveProjectBlueprint,
   settleGenerationCredits,
   updateProjectBlueprintQuality,
+  updateGenerationTelemetry,
 } from "@/db";
 import { getCurrentUser } from "@/lib/auth";
 import {
   parseBlueprintContract,
   qualityGateMessage,
   validateBlueprintConsistency,
+  validateDocumentCompleteness,
 } from "@/lib/blueprint-quality";
 import { isAutoModel } from "@/lib/models-config";
 import { ROUTING_VERSION, type ModelsUsedMap } from "@/lib/model-router";
+import { terminalDraftTelemetry } from "@/lib/generation-telemetry";
 import { ERROR_CODES, apiError, apiSuccess, generateRequestId } from "@/lib/errors";
 import type { FileName, GeneratedFiles } from "@/lib/types";
 
@@ -52,6 +57,7 @@ export async function POST(request: NextRequest) {
   const blueprintRaw = typeof body.blueprint === "string" ? body.blueprint : "";
   const files = asGeneratedFiles(body.files);
   const modelsUsed = (body.modelsUsed || null) as ModelsUsedMap | null;
+  const finalizeAsDraft = body.finalizeAsDraft === true;
 
   if (!generationId || !projectId || !selectedModel || !blueprintRaw || !files) {
     return apiError(ERROR_CODES.VALIDATION_FAILED, "Data Quality Gate V2.1 belum lengkap atau tidak valid.", 400, requestId);
@@ -111,9 +117,62 @@ export async function POST(request: NextRequest) {
     }
 
     const report = validateBlueprintConsistency(blueprint, files);
+
+    // ── Critical Gate Only ──────────────────────────────────────────────
+    // Run the full quality report for internal logging/telemetry, but only
+    // block finalization on truly critical issues. Non-critical findings
+    // (terminology drift, minor contract mismatches, wording differences)
+    // are logged internally and never shown to or block the user.
+    const criticalFailures: string[] = [];
+
+    // Check 1: Missing or too-short documents (per-document thresholds)
+    const DOCUMENT_NAMES: FileName[] = ["PRD.md", "TECH-STACK.md", "UI-UX.md", "SCHEMA.md"];
+    for (const doc of DOCUMENT_NAMES) {
+      if (!files[doc] || files[doc].trim().length < 600) {
+        criticalFailures.push(`Dokumen ${doc} kosong atau terlalu pendek.`);
+      }
+    }
+
+    // Check 2: Document truncation or structural break
+    for (const doc of DOCUMENT_NAMES) {
+      const content = files[doc]?.trim() ?? "";
+      if (content.length < 600) continue;
+      const completeness = validateDocumentCompleteness(doc, content);
+      if (!completeness.valid) {
+        criticalFailures.push(completeness.detail);
+      }
+    }
+
+    // Determine if we should block or pass
+    const hasCriticalIssues = criticalFailures.length > 0;
+    report.passed = !hasCriticalIssues;
+
+    // Collect non-critical findings for telemetry (internal only, never shown to user)
+    const nonCriticalWarnings = report.checks.filter(
+      (c) => c.status === "failed" || c.status === "repair" || c.status === "warning",
+    ).map((c) => ({ id: c.id, label: c.label, detail: c.detail }));
+
+    // Clear user-facing failures/repairs — warnings become internal-only
+    if (!hasCriticalIssues) {
+      report.failures = [];
+      report.repairs = [];
+      report.checks.forEach((c) => {
+        if (c.status === "failed" || c.status === "repair" || c.status === "warning") {
+          c.status = "passed";
+        }
+      });
+    } else {
+      // For critical failures, replace failures with just the critical ones
+      report.failures = criticalFailures;
+      report.repairs = [];
+    }
+
     const serializedBlueprint = JSON.stringify(blueprint);
     const reportWithMetadata = {
       ...report,
+      // Internal telemetry: non-critical findings count & breakdown
+      internalWarningCount: nonCriticalWarnings.length,
+      internalWarningBreakdown: nonCriticalWarnings,
       ...(modelsUsed ? { modelsUsed, routingVersion: ROUTING_VERSION } : {}),
     };
     const serializedReport = JSON.stringify(reportWithMetadata);
@@ -127,12 +186,65 @@ export async function POST(request: NextRequest) {
     });
 
     if (!report.passed) {
+      // Keep all four generated documents as recoverable drafts. The user can
+      // download them immediately or repair them with AI instead of losing the
+      // entire result after the final validation step.
+      await saveProjectDocumentDrafts(db, {
+        userEmail: user.email,
+        projectId,
+        projectName,
+        selectedModel,
+        documents: DOCUMENTS.map((document) => ({
+          documentType: document.documentType,
+          fileName: document.fileName,
+          content: files[document.fileName].trim(),
+        })),
+      });
+        if (finalizeAsDraft) {
+        const settleResult = await settleGenerationCredits(db, { generationId, userEmail: user.email });
+        if (!settleResult.ok) {
+          return apiError(
+            ERROR_CODES.CREDIT_RESERVATION_INVALID_STATE,
+            "Draf dokumen sudah aman, tetapi kredit belum dapat diselesaikan. Silakan coba lagi; kredit tetap aman.",
+            409,
+            requestId,
+          );
+        }
+        const now = new Date().toISOString();
+        await db.execute({
+          sql: `UPDATE document_generations
+            SET status = 'DRAFT_READY', completed_at = ?
+            WHERE id = ? AND LOWER(user_email) = LOWER(?)`,
+          args: [now, generationId, user.email],
+        });
+        await reconcileTerminalProviderAttempts(db, generationId);
+        // Server-authoritative telemetry update (MUST be awaited — row may not exist yet)
+        await updateGenerationTelemetry(db, generationId, {
+          ...terminalDraftTelemetry(now),
+          qualityPath: "READY_WITH_WARNINGS",
+        }, user.email).catch((e) => {
+          console.error(`[TELEMETRY_WRITE_FAILED] gen=${generationId} fn=quality-gate-finalizeAsDraft error=${e instanceof Error ? e.message : String(e)}`);
+        });
+        return NextResponse.json({
+          ok: false,
+          code: ERROR_CODES.AI_OUTPUT_INVALID,
+          message: qualityGateMessage(report),
+          error: qualityGateMessage(report),
+          data: {
+            report,
+            draftReady: true,
+            credits: settleResult.availableCredits ?? 0,
+            reservedCredits: settleResult.reservedCredits ?? 0,
+          },
+          requestId,
+        }, { status: 422 });
+      }
       return NextResponse.json({
         ok: false,
         code: ERROR_CODES.AI_OUTPUT_INVALID,
         message: qualityGateMessage(report),
         error: qualityGateMessage(report),
-        data: { report },
+        data: { report, draftReady: false },
         requestId,
       }, { status: 422 });
     }
@@ -181,11 +293,20 @@ export async function POST(request: NextRequest) {
       sql: "UPDATE document_generations SET status = 'COMPLETED', completed_at = ? WHERE id = ? AND LOWER(user_email) = LOWER(?)",
       args: [now, generationId, user.email],
     });
+    await reconcileTerminalProviderAttempts(db, generationId);
     await updateProjectBlueprintQuality(db, {
       userEmail: user.email,
       generationId,
       qualityReport: serializedReport,
       qualityStatus: "PASSED",
+    });
+    // Server-authoritative telemetry update (MUST be awaited — row may not exist yet)
+    await updateGenerationTelemetry(db, generationId, {
+      creditResult: "CAPTURED",
+      finalizedAt: now,
+      finalStatus: "COMPLETED",
+    }, user.email).catch((e) => {
+      console.error(`[TELEMETRY_WRITE_FAILED] gen=${generationId} fn=quality-gate-completed error=${e instanceof Error ? e.message : String(e)}`);
     });
 
     return apiSuccess({

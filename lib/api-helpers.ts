@@ -80,17 +80,34 @@ function getStreamDelta(event: ProviderStreamEvent, providerName: string) {
     throw new Error(getProviderError(event.error.code ?? 500, providerName, event.error.message));
   }
   const choice = event.choices?.[0];
+  const choiceDelta = choice?.delta as Record<string, unknown> | undefined;
+  const choiceMessage = choice?.message as Record<string, unknown> | undefined;
+  const eventRecord = event as Record<string, unknown>;
+
   return {
     content:
-      getTextContent(choice?.delta?.content) ||
-      getTextContent(choice?.delta?.text) ||
-      getTextContent(choice?.message?.content) ||
+      getTextContent(choiceDelta?.content) ||
+      getTextContent(choiceDelta?.text) ||
+      getTextContent(choiceMessage?.content) ||
+      getTextContent(choiceMessage?.text) ||
       getTextContent(choice?.text) ||
       getTextContent(event.output_text) ||
       getTextContent(event.response) ||
-      getTextContent(event.content),
-    reasoning: getTextContent(choice?.delta?.reasoning_content),
-    finishReason: choice?.finish_reason ?? null,
+      getTextContent(event.content) ||
+      getTextContent(eventRecord?.delta && typeof eventRecord.delta === "object" ? (eventRecord.delta as Record<string, unknown>).text : undefined) ||
+      getTextContent(eventRecord?.delta && typeof eventRecord.delta === "object" ? (eventRecord.delta as Record<string, unknown>).content : undefined),
+    reasoning:
+      getTextContent(choiceDelta?.reasoning_content) ||
+      getTextContent(choiceDelta?.reasoning) ||
+      getTextContent(choiceDelta?.thought) ||
+      getTextContent(choiceDelta?.thinking) ||
+      getTextContent(choiceMessage?.reasoning_content) ||
+      getTextContent(choiceMessage?.reasoning) ||
+      getTextContent(choiceMessage?.thought) ||
+      getTextContent(eventRecord?.reasoning_content) ||
+      getTextContent(eventRecord?.reasoning) ||
+      getTextContent(eventRecord?.thought),
+    finishReason: choice?.finish_reason ?? (eventRecord?.finish_reason as string | null) ?? null,
   };
 }
 
@@ -103,6 +120,7 @@ export async function consumeProviderStream(
   _providerKind: string,
   providerName: string,
   onUpdate: (update: { content: string; reasoning: string }) => void,
+  options: { timeoutMs?: number } = {},
 ): Promise<StreamConsumeResult> {
   if (!response.body) throw new Error(`${providerName} tidak mengembalikan aliran respons.`);
 
@@ -110,6 +128,17 @@ export async function consumeProviderStream(
   const decoder = new TextDecoder();
   let buffer = "";
   let lastFinishReason: string | null = null;
+  let timeoutId: ReturnType<typeof setTimeout> | undefined;
+  let timeoutError: Error | undefined;
+  const timeout = options.timeoutMs
+    ? new Promise<never>((_, reject) => {
+        timeoutId = setTimeout(() => {
+          timeoutError = new Error("Waktu perbaikan dokumen telah melewati batas. Dokumen yang sudah tersedia tetap aman.");
+          void reader.cancel().catch(() => {});
+          reject(timeoutError);
+        }, options.timeoutMs);
+      })
+    : null;
 
   const consumeData = (rawData: string) => {
     const data = rawData.trim();
@@ -126,21 +155,32 @@ export async function consumeProviderStream(
     }
   };
 
-  while (true) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    buffer += decoder.decode(value, { stream: true });
-    const lines = buffer.split(/\r?\n/);
-    buffer = lines.pop() ?? "";
-    lines.forEach((line) => {
-      if (line.startsWith("data:")) consumeData(line.slice(5));
-    });
+  try {
+    while (true) {
+      const { done, value } = timeout
+        ? await Promise.race([reader.read(), timeout])
+        : await reader.read();
+      // reader.cancel() can resolve reader.read() with done=true before the
+      // rejected timeout promise wins Promise.race. Preserve the timeout as a
+      // terminal semantic failure instead of treating that race as a normal
+      // stream completion.
+      if (timeoutError) throw timeoutError;
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split(/\r?\n/);
+      buffer = lines.pop() ?? "";
+      lines.forEach((line) => {
+        if (line.startsWith("data:")) consumeData(line.slice(5));
+      });
+    }
+
+    buffer += decoder.decode();
+    if (buffer.trim().startsWith("data:")) consumeData(buffer.trim().slice(5));
+
+    return { finishReason: lastFinishReason };
+  } finally {
+    if (timeoutId) clearTimeout(timeoutId);
   }
-
-  buffer += decoder.decode();
-  if (buffer.trim().startsWith("data:")) consumeData(buffer.trim().slice(5));
-
-  return { finishReason: lastFinishReason };
 }
 
 export async function requestDocumentStream(
@@ -150,10 +190,25 @@ export async function requestDocumentStream(
   systemPrompt: string,
   maxOutputTokens: number,
   stage?: string,
+  timeoutMs?: number,
 ): Promise<Response> {
-  return fetch("/api/generate", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ generationId, selectedModel, userContent, systemPrompt, maxOutputTokens, stage }),
-  });
+  const controller = timeoutMs ? new AbortController() : undefined;
+  const timeout = timeoutMs
+    ? setTimeout(() => controller?.abort(), timeoutMs)
+    : undefined;
+  try {
+    return await fetch("/api/generate", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ generationId, selectedModel, userContent, systemPrompt, maxOutputTokens, stage }),
+      signal: controller?.signal,
+    });
+  } catch (error) {
+    if (error instanceof DOMException && error.name === "AbortError") {
+      throw new Error("Waktu perbaikan dokumen telah melewati batas. Dokumen yang sudah tersedia tetap aman.");
+    }
+    throw error;
+  } finally {
+    if (timeout) clearTimeout(timeout);
+  }
 }

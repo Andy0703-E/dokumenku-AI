@@ -9,6 +9,7 @@ import {
   Layers,
   CheckCircle2,
   FileCode2,
+  Copy,
 } from "lucide-react";
 import { toast } from "sonner";
 import ReactMarkdown from "react-markdown";
@@ -22,6 +23,7 @@ import {
 } from "@/components/ui/tabs";
 import { FILES, downloadMarkdown } from "@/lib/stream-parser";
 import { downloadAllAsZip } from "@/lib/export";
+import { generateVibeCoderPrompt, hasAllDocumentsReady } from "@/lib/vibecoder-prompt";
 import type { GeneratedFiles, FileName } from "@/lib/types";
 
 function MarkdownContent({ content }: { content: string }) {
@@ -59,6 +61,20 @@ export default function DocumentViewer({
     toast.success(`${label} berhasil disalin ke clipboard`);
   }
 
+  async function handleCopyVibeCoderPrompt() {
+    if (!hasAllDocumentsReady(files)) {
+      toast.error("Seluruh 4 dokumen harus selesai dibuat sebelum menyalin prompt.");
+      return;
+    }
+    const promptText = generateVibeCoderPrompt(files);
+    try {
+      await navigator.clipboard.writeText(promptText);
+      toast.success("Prompt berhasil disalin! Siap ditempel ke Claude Code, Cursor, Windsurf, atau Copilot.");
+    } catch {
+      toast.error("Gagal menyalin prompt ke clipboard.");
+    }
+  }
+
   function handleDownloadZip() {
     const hasContent = FILES.some(({ name }) => files[name].trim().length > 0);
     if (!hasContent) {
@@ -86,6 +102,32 @@ export default function DocumentViewer({
         </div>
 
         <div style={{ display: "flex", alignItems: "center", gap: "8px", flexWrap: "wrap" }}>
+          <button
+            type="button"
+            className="btn-primary"
+            style={{
+              minHeight: "36px",
+              padding: "0 14px",
+              fontSize: "0.78rem",
+              background: "linear-gradient(135deg, #0D9488 0%, #0F766E 100%)",
+              color: "#FFFFFF",
+              border: "none",
+              borderRadius: "8px",
+              fontWeight: 650,
+              display: "inline-flex",
+              alignItems: "center",
+              gap: "6px",
+              cursor: (hasResult || hasAllDocumentsReady(files)) ? "pointer" : "not-allowed",
+              opacity: (hasResult || hasAllDocumentsReady(files)) ? 1 : 0.5,
+              boxShadow: (hasResult || hasAllDocumentsReady(files)) ? "0 2px 8px rgba(13, 148, 136, 0.3)" : "none",
+            }}
+            onClick={handleCopyVibeCoderPrompt}
+            disabled={!hasResult && !hasAllDocumentsReady(files)}
+            title="Salin master prompt yang menggabungkan 4 dokumen ini untuk Cursor, Claude Code, Windsurf, Copilot, dll."
+          >
+            <Copy size={15} /> Salin Prompt
+          </button>
+
           <button
             type="button"
             className="btn-secondary"

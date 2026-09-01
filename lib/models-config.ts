@@ -20,6 +20,20 @@ export type ProviderModelMetadata = {
   vision?: boolean;
 };
 
+// ── Hardcoded Models (not returned by /models endpoint) ─────────────────────
+// Models that work via the API but don't appear in the models list.
+// Used as aliases or internal promotional models.
+export const HARDCODED_MODELS: Array<{ id: string; name: string; tier: ModelTier; tokenMultiplier?: number }> = [
+  // Virtual combo models (gateway handles routing)
+  { id: "promo:05", name: "Promo 0,5 (3.5→3.5-2603→3.7)", tier: "starter", tokenMultiplier: 0.5 },
+  { id: "promo:05-repair", name: "Promo 0,5 Repair (3.7→3.5-2603→3.5)", tier: "starter", tokenMultiplier: 0.5 },
+  { id: "auto:free", name: "Auto Free Model", tier: "starter", tokenMultiplier: 0 },
+  // Individual models (direct access)
+  { id: "sf/step-3.5-flash", name: "Step 3.5 Flash", tier: "starter", tokenMultiplier: 0.5 },
+  { id: "sf/step-3.5-flash-2603", name: "Step 3.5 Flash 2603", tier: "starter", tokenMultiplier: 0.5 },
+  { id: "sf/step-3.7-flash", name: "Step 3.7 Flash", tier: "starter", tokenMultiplier: 0.5 },
+];
+
 const FLAGSHIP_PATTERNS = [
   /claude-fable/i,
   /fable/i,

@@ -1,6 +1,15 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getCurrentUser } from "@/lib/auth";
 import { getDatabase, getProjectDocuments } from "@/db";
+import { parseBlueprintContract, validateBlueprintConsistency } from "@/lib/blueprint-quality";
+import type { FileName, GeneratedFiles } from "@/lib/types";
+
+const DOCUMENT_TYPE_TO_FILE_NAME: Record<string, FileName> = {
+  PRD: "PRD.md",
+  TECH_SPEC: "TECH-STACK.md",
+  UI_UX: "UI-UX.md",
+  AI_CONTEXT: "SCHEMA.md",
+};
 
 export async function GET(
   _request: NextRequest,
@@ -19,7 +28,40 @@ export async function GET(
   try {
     const db = await getDatabase();
     const data = await getProjectDocuments(db, user.email, projectId);
-    return NextResponse.json({ data });
+    // The contract is returned only for this signed-in user's project and is
+    // used as private context for AI revisions. It is never rendered in the UI.
+    const blueprintResult = await db.execute({
+      sql: `SELECT content FROM project_blueprints
+        WHERE LOWER(user_email) = LOWER(?) AND project_id = ? LIMIT 1`,
+      args: [user.email, projectId],
+    });
+    const blueprint = blueprintResult.rows[0]?.content;
+    let qualityReport = data.qualityReport;
+    let qualityStatus = data.qualityStatus;
+    if (typeof blueprint === "string" && data.documents.length === 4) {
+      try {
+        const files = {} as GeneratedFiles;
+        for (const document of data.documents) {
+          const fileName = DOCUMENT_TYPE_TO_FILE_NAME[document.documentType];
+          if (fileName) files[fileName] = document.content;
+        }
+        const report = validateBlueprintConsistency(parseBlueprintContract(blueprint), files);
+        // Recompute on read so previously saved, stale reports do not keep
+        // showing notes already resolved by an updated deterministic checker.
+        qualityReport = JSON.stringify(report);
+        qualityStatus = report.passed ? "PASSED" : "FAILED";
+      } catch {
+        // Keep the stored report available when a legacy blueprint cannot be parsed.
+      }
+    }
+    return NextResponse.json({
+      data: {
+        ...data,
+        qualityReport,
+        qualityStatus,
+        blueprint: typeof blueprint === "string" ? blueprint : null,
+      },
+    });
   } catch {
     return NextResponse.json({ error: "Gagal memuat dokumen proyek." }, { status: 500 });
   }

@@ -1,5 +1,6 @@
 import JSZip from "jszip";
 import type { GeneratedFiles, FileName } from "./types";
+import { generateVibeCoderPrompt, hasAllDocumentsReady } from "./vibecoder-prompt";
 
 function getZipFileName(projectName?: string): string {
   const cleanedName = projectName
@@ -18,6 +19,10 @@ export async function downloadAllAsZip(files: GeneratedFiles, projectName?: stri
 
   for (const name of Object.keys(files) as FileName[]) {
     if (files[name]) zip.file(name, files[name]);
+  }
+
+  if (hasAllDocumentsReady(files)) {
+    zip.file("VIBECODER-PROMPT.md", generateVibeCoderPrompt(files, projectName));
   }
 
   const content = await zip.generateAsync({ type: "blob" });
