@@ -1,6 +1,7 @@
 import JSZip from "jszip";
 import type { GeneratedFiles, FileName } from "./types";
 import { generateVibeCoderPrompt, hasAllDocumentsReady } from "./vibecoder-prompt";
+import { findDocumentOutputIsolationIssues } from "./blueprint-quality";
 
 function getZipFileName(projectName?: string): string {
   const cleanedName = projectName
@@ -15,6 +16,11 @@ function getZipFileName(projectName?: string): string {
 }
 
 export async function downloadAllAsZip(files: GeneratedFiles, projectName?: string) {
+  const isolationIssues = findDocumentOutputIsolationIssues(files);
+  if (isolationIssues.length) {
+    throw new Error("ZIP ditahan: setiap dokumen harus memiliki satu judul H1 yang tepat sebelum diekspor.");
+  }
+
   const zip = new JSZip();
 
   for (const name of Object.keys(files) as FileName[]) {

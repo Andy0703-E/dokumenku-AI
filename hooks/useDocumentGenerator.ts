@@ -666,12 +666,11 @@ export function useDocumentGenerator(
         setProgress(10);
         const activeGenerationId = generationId as string;
 
-        // ── Parallel Document Generation ─────────────────────────────────
-        // Every document depends on the completed blueprint, not on another
-        // generated document. Two workers cut the waiting time roughly in half
-        // while keeping the upstream load bounded and predictable.
+        // ── Ordered Document Generation ──────────────────────────────────
+        // Each document receives only the earlier documents prescribed by the
+        // read-only context contract. This preserves output isolation while
+        // making technical, UI, and schema decisions traceable to the PRD.
         const documentFailures: Error[] = [];
-        let nextDocumentIndex = 0;
         let completedDocumentCount = 0;
 
         const generateDocument = async (step: FileName): Promise<string> => {
@@ -686,7 +685,7 @@ export function useDocumentGenerator(
               activeGenerationId,
               AUTO_MODEL_ID,
               `Brief proyek pengguna:\n\n${brief}`,
-              `${getDocumentSystemPrompt(step, blueprint)}${retryInstruction}`,
+              `${getDocumentSystemPrompt(step, blueprint, currentFiles)}${retryInstruction}`,
               24_000,
               stepStage,
             );
@@ -753,7 +752,7 @@ export function useDocumentGenerator(
               activeGenerationId,
               AUTO_MODEL_ID,
               `Brief proyek:\n\n${brief}\n\n---\nDokumen ${step} terpotong. Lanjutkan dari bagian terakhir.\n\nKonteks ${step} yang sudah ada:\n\n${output.slice(-1500)}`,
-              `${getDocumentSystemPrompt(step, blueprint)}\n\nTugas: Lanjutkan dokumen ${step} dari bagian yang terpotong. JANGAN ulangi bagian yang sudah ada. Tulis sisa bagian yang belum lengkap sampai dokumen benar-benar selesai. Akhiri dengan penutup yang natural.`,
+              `${getDocumentSystemPrompt(step, blueprint, currentFiles)}\n\nTugas: Lanjutkan dokumen ${step} dari bagian yang terpotong. JANGAN ulangi bagian yang sudah ada. Tulis sisa bagian yang belum lengkap sampai dokumen benar-benar selesai. Akhiri dengan penutup yang natural.`,
               24_000,
               stepStage,
             );
@@ -817,29 +816,25 @@ export function useDocumentGenerator(
           return completedOutput;
         };
 
-        const workers = Array.from({ length: Math.min(MAX_PARALLEL_DOCUMENTS, DOCUMENT_STEPS.length) }, async () => {
-          while (nextDocumentIndex < DOCUMENT_STEPS.length) {
-            const step = DOCUMENT_STEPS[nextDocumentIndex];
-            nextDocumentIndex += 1;
-            const docStartMs = Date.now();
-            try {
-              const completedOutput = await generateDocument(step);
-              const docMs = Date.now() - docStartMs;
-              currentFiles = { ...currentFiles, [step]: completedOutput };
-              completedDocumentCount += 1;
-              setFiles(currentFiles);
-              setProgress(10 + Math.round((completedDocumentCount / DOCUMENT_STEPS.length) * 84));
-              // Record per-document timing
-              if (step === "PRD.md") timingRef.current.prdMs = docMs;
-              else if (step === "TECH-STACK.md") timingRef.current.techStackMs = docMs;
-              else if (step === "UI-UX.md") timingRef.current.uiUxMs = docMs;
-              else if (step === "SCHEMA.md") timingRef.current.schemaMs = docMs;
-            } catch (error) {
-              documentFailures.push(error instanceof Error ? error : new Error(String(error)));
-            }
+        for (const step of DOCUMENT_STEPS) {
+          const docStartMs = Date.now();
+          try {
+            const completedOutput = await generateDocument(step);
+            const docMs = Date.now() - docStartMs;
+            currentFiles = { ...currentFiles, [step]: completedOutput };
+            completedDocumentCount += 1;
+            setFiles(currentFiles);
+            setProgress(10 + Math.round((completedDocumentCount / DOCUMENT_STEPS.length) * 84));
+            // Record per-document timing
+            if (step === "PRD.md") timingRef.current.prdMs = docMs;
+            else if (step === "TECH-STACK.md") timingRef.current.techStackMs = docMs;
+            else if (step === "UI-UX.md") timingRef.current.uiUxMs = docMs;
+            else if (step === "SCHEMA.md") timingRef.current.schemaMs = docMs;
+          } catch (error) {
+            documentFailures.push(error instanceof Error ? error : new Error(String(error)));
+            break;
           }
-        });
-        await Promise.all(workers);
+        }
         if (documentFailures.length > 0) {
           throw documentFailures[0];
         }
@@ -903,7 +898,7 @@ export function useDocumentGenerator(
               const step = filesToRepair[index];
               const repairStage: GenerationStage = "targeted-repair";
               const findings = initialReport.checks
-                .filter((check) => check.status === "repair")
+                .filter((check) => check.status === "repair" || check.status === "failed")
                 .filter((check) => documentsNeedingQualityFix({ ...initialReport, checks: [check] }).includes(step))
                 .map((check) => check.detail);
               if (!findings.length) continue;
@@ -979,7 +974,7 @@ export function useDocumentGenerator(
                     generationId,
                     AUTO_MODEL_ID,
                     `Dokumen: ${step}. Tulis ulang dokumen lengkap sesuai kontrak proyek.`,
-                    getFullDocumentQualityRepairSystemPrompt(step, blueprint, currentFiles[step], findings),
+                    getFullDocumentQualityRepairSystemPrompt(step, blueprint, currentFiles[step], findings, currentFiles),
                     24_000,
                     fullRepairStage,
                     120_000,

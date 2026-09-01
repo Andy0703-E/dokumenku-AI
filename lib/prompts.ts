@@ -16,6 +16,56 @@ const DOCUMENT_OUTLINES: Record<FileName, string[]> = {
   "SCHEMA.md": ["Prinsip data dan daftar entitas", "ERD Mermaid", "Tabel, kolom, tipe data, kunci, serta validasi", "Relasi dan kardinalitas antarentitas", "Constraints, indeks, dan lifecycle data", "Hak akses, audit trail, retensi, dan keamanan data"],
 };
 
+/**
+ * Documents are intentionally produced as a dependency chain. A later
+ * document can use an earlier one to keep terminology and implementation
+ * choices aligned, but must never return that context as part of its output.
+ */
+const READ_ONLY_CONTEXT_FILES: Record<FileName, FileName[]> = {
+  "PRD.md": [],
+  "TECH-STACK.md": ["PRD.md"],
+  "UI-UX.md": ["PRD.md", "TECH-STACK.md"],
+  "SCHEMA.md": ["PRD.md", "TECH-STACK.md", "UI-UX.md"],
+};
+
+function outputIsolationRules(file: FileName): string {
+  const otherFiles = (Object.keys(READ_ONLY_CONTEXT_FILES) as FileName[])
+    .filter((candidate) => candidate !== file);
+
+  return `STRICT OUTPUT RULE:
+- Output ONLY ${file}.
+- The first non-empty line MUST be exactly: # ${file}
+- There may be only ONE H1 document title, and it MUST be exactly: # ${file}
+- Do not include an H1 for ${otherFiles.join(", ")}.
+- Do not reproduce, quote wholesale, or append any context document.
+- Do not wrap the output in a code fence or add conversational text.`;
+}
+
+function readOnlyContextPrompt(
+  file: FileName,
+  generatedFiles: Partial<GeneratedFiles> = {},
+): string {
+  const contextFiles = READ_ONLY_CONTEXT_FILES[file];
+  if (!contextFiles.length) return "";
+
+  const instruction = file === "TECH-STACK.md"
+    ? "Generate TECH-STACK.md using PRD.md as READ-ONLY CONTEXT."
+    : file === "UI-UX.md"
+      ? "PRD.md and TECH-STACK.md are READ-ONLY CONTEXT. Generate ONLY UI-UX.md. Do not repeat or reproduce any context document."
+      : "PRD.md, TECH-STACK.md, and UI-UX.md are READ-ONLY CONTEXT. Generate ONLY SCHEMA.md. Do not reproduce the context documents.";
+
+  const documents = contextFiles
+    .map((contextFile) => {
+      const content = generatedFiles[contextFile]?.trim();
+      return content
+        ? `--- BEGIN READ-ONLY ${contextFile} ---\n${content}\n--- END READ-ONLY ${contextFile} ---`
+        : `--- ${contextFile} is unavailable; do not invent its contents. ---`;
+    })
+    .join("\n\n");
+
+  return `${instruction}\n\n${outputIsolationRules(file)}\n\nREAD-ONLY CONTEXT — use it only to preserve facts and terminology; never reproduce it in the result:\n\n${documents}`;
+}
+
 const TARGETED_REPAIR_SECTION_KEYWORDS: Record<FileName, string[]> = {
   "PRD.md": ["role", "permission", "fitur", "lifecycle", "alur", "kriteria", "asumsi"],
   "TECH-STACK.md": ["api", "integrasi", "security", "keamanan", "arsitektur"],
@@ -235,15 +285,16 @@ export function getFullDocumentQualityRepairSystemPrompt(
   blueprint: BlueprintContract,
   existingContent: string,
   findings: string[],
+  relatedFiles?: Partial<GeneratedFiles>,
 ): string {
-  return `${getDocumentSystemPrompt(file, blueprint)}
+  return `${getDocumentSystemPrompt(file, blueprint, relatedFiles)}
 
 PERBAIKAN QUALITY GATE — instruksi ini wajib dipatuhi:
 - Tulis ulang SELURUH ${file}, bukan patch atau ringkasan.
 - Pertahankan struktur heading wajib dan detail yang masih sesuai kontrak.
 - Hapus role, status lifecycle, integrasi, fitur, atau aturan bisnis bernama yang tidak ada di DATA PRODUK ACUAN.
 - Jangan menambah asumsi sebagai keputusan sistem; tandai sebagai **Asumsi** bila benar-benar diperlukan.
-- Kembalikan Markdown lengkap saja, tanpa blok kode pembungkus atau penjelasan.
+- Kembalikan Markdown lengkap saja, tanpa blok kode pembungkus atau penjelasan. Terapkan STRICT OUTPUT RULE di atas, termasuk H1 tunggal # ${file}.
 
 Temuan yang harus hilang setelah penulisan ulang:
 ${findings.map((finding, index) => `${index + 1}. ${finding}`).join("\n")}
@@ -372,10 +423,17 @@ export function getBlueprintRecoveryPrompt(): string {
 Aturan penting: semua nama role atau entitas yang dirujuk harus sama persis dengan array utama. Fase hanya MVP, V1, atau FUTURE. Minimal isi satu role, satu entitas, dan satu fitur. Jangan gunakan trailing comma.`;
 }
 
-export function getDocumentSystemPrompt(file: FileName, blueprint: BlueprintContract): string {
+export function getDocumentSystemPrompt(
+  file: FileName,
+  blueprint: BlueprintContract,
+  generatedFiles: Partial<GeneratedFiles> = {},
+): string {
   const outline = DOCUMENT_OUTLINES[file].map((item) => `- ${item}`).join("\n");
   const canonicalBlueprint = JSON.stringify(blueprint, null, 2);
+  const readOnlyContext = readOnlyContextPrompt(file, generatedFiles);
   return `Anda adalah product manager dan solution architect senior. Buat HANYA isi lengkap dokumen Markdown bernama ${file} berdasarkan brief pengguna.
+
+${outputIsolationRules(file)}
 
 Fokus dokumen ini: ${DOCUMENT_FOCUS[file]}.
 
@@ -403,7 +461,12 @@ ${outline}
 - Khusus UI-UX.md: kedua bagian Textual Wireframe harus menulis tata letak layar dalam teks/ASCII yang jelas untuk Desktop dan Mobile, termasuk state penting.
 - Khusus SCHEMA.md: sertakan satu blok Mermaid dengan kata awal \`erDiagram\`, tabel lengkap, serta constraint eksplisit (misalnya PK, FK, UNIQUE, CHECK, NOT NULL) untuk entitas yang relevan. Jangan menggabungkan atau menghilangkan heading **Relasi**, **Constraint**, **Index**, **Lifecycle**, **Audit**, dan **Retention**; masing-masing harus memiliki penjelasan sendiri, termasuk bila hanya berisi asumsi atau kebijakan. Keputusan bisnis yang dapat terjadi berkali-kali dalam satu proses harus memiliki relasi/FK ke record yang diputuskan.
 - Khusus PRD.md: Scope MVP, V1, dan Future harus dibedakan tegas. Bagian Assumptions & Open Questions menjadi sumber terpusat bagi asumsi/pertanyaan dokumen.
-- Jangan menulis pembuka percakapan, penutup, blok kode pembungkus, atau marker seperti <<<FILE:...>>>.`;
+- Khusus TECH-STACK.md: tetapkan satu rancangan autentikasi kanonis. Jangan memperlakukan cookie sesi, access JWT, dan refresh token sebagai mekanisme yang saling menggantikan. Bila token/sesi perlu disimpan, jelaskan penyimpanan hash, kedaluwarsa, dan pencabutan; jangan menaruh bearer token pada URL stream. Untuk EventSource/SSE di browser, gunakan cookie sesi HttpOnly atau mekanisme yang benar-benar bisa dikirim browser; EventSource tidak dapat mengirim header Authorization kustom.
+- Khusus TECH-STACK.md: untuk setiap alur streaming, pilih transport yang jelas dan konsisten (misalnya SSE atau WebSocket), otorisasi sebelum stream dibuka, serta jelaskan reconnect/cursor atau idempotensi bila relevan.
+- Khusus SCHEMA.md: struktur auth harus mengikuti TECH-STACK.md. Jika sesi atau refresh token dipersistenkan, simpan hanya hash/token lookup yang aman beserta expiry, revocation, dan audit; jangan simpan bearer/access token mentah. Jika auth stateless tanpa penyimpanan sesi, jangan mendefinisikan tabel sesi sebagai mekanisme autentikasi aktif.
+- Jangan menulis pembuka percakapan, penutup, blok kode pembungkus, atau marker seperti <<<FILE:...>>>.
+
+${readOnlyContext}`;
 }
 
 export function getRevisionSystemPrompt(
@@ -467,6 +530,7 @@ ${relatedContext ? `Dokumen terkait sebagai referensi konsistensi (jangan dikuti
 Aturan:
 - Perbarui dokumen secara menyeluruh dengan menerapkan revisi yang diminta.
 - Pertahankan struktur dokumen yang sudah rapi, jangan menghilangkan bagian penting yang tidak diminta diubah.
+- Output HANYA ${file}. Baris tidak-kosong pertama harus tepat \`# ${file}\`, dan ini adalah satu-satunya H1. Jangan menulis H1 untuk PRD.md, TECH-STACK.md, UI-UX.md, atau SCHEMA.md yang bukan target.
 - ${scopeInstruction}
 - Bila catatan pemeriksaan menyebut role, status, fitur, integrasi, endpoint, atau entitas yang tidak sesuai, gunakan hanya istilah dalam kontrak blueprint di atas. Hapus atau ganti istilah lama yang berada di luar kontrak; jangan mempertahankannya hanya karena ada pada dokumen saat ini.
 - Tulis dalam Bahasa Indonesia standar profesional, terstruktur, dan siap pakai.

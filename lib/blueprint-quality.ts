@@ -100,6 +100,8 @@ const DOCUMENT_LABELS: Record<FileName, string> = {
   "SCHEMA.md": "Schema",
 };
 
+const DOCUMENT_FILES: FileName[] = ["PRD.md", "TECH-STACK.md", "UI-UX.md", "SCHEMA.md"];
+
 const USER_FACING_NOTE_COPY: Record<string, { title: string; description: string }> = {
   "blueprint-contract": { title: "Rancangan proyek perlu dilengkapi", description: "Ada ketentuan dasar proyek yang belum lengkap sehingga dokumen perlu diselaraskan kembali." },
   "four-documents": { title: "Ada dokumen yang belum lengkap", description: "Lengkapi bagian dokumen yang belum tersedia agar blueprint dapat digunakan secara utuh." },
@@ -123,6 +125,8 @@ const USER_FACING_NOTE_COPY: Record<string, { title: string; description: string
   "relationship-integrity": { title: "Hubungan data perlu dilengkapi", description: "Relasi data belum sepenuhnya mendukung alur bisnis yang dijelaskan." },
   "schema-reference-integrity": { title: "Referensi data perlu diperbaiki", description: "Beberapa index atau hubungan data perlu disesuaikan dengan struktur tabel yang ada." },
   "security-feasibility": { title: "Penerapan keamanan perlu diselaraskan", description: "Rancangan keamanan dan struktur data perlu dibuat selaras agar dapat diterapkan dengan aman." },
+  "auth-streaming-coherence": { title: "Auth dan streaming perlu diselaraskan", description: "Mekanisme login, penyimpanan token, dan alur data real-time perlu menggunakan rancangan yang konsisten dan aman." },
+  "document-output-isolation": { title: "Dokumen tercampur", description: "Setiap file harus memiliki satu judul dokumen yang tepat dan tidak boleh memuat judul dokumen lain." },
 };
 
 function asRecord(value: unknown): Record<string, unknown> | null {
@@ -936,6 +940,56 @@ function findSecurityFeasibilityIssue(files: GeneratedFiles): SemanticIssue | nu
   };
 }
 
+/**
+ * Only flags explicit, implementationally impossible combinations. It does
+ * not reject legitimate hybrids such as short-lived JWTs plus hashed refresh
+ * sessions, or an application that uses SSE and WebSocket for different
+ * flows.
+ */
+function findAuthStreamingCoherenceIssue(files: GeneratedFiles): SemanticIssue | null {
+  const tech = files["TECH-STACK.md"];
+  const schema = files["SCHEMA.md"];
+  const issues: string[] = [];
+  const affected = new Set<FileName>();
+
+  const usesEventSource = /\beventsource\b/i.test(tech);
+  const sendsBearerHeader = /(?:authorization\s*[:=]\s*["'`]?bearer\b|bearer\s+(?:token|jwt)[^\n]{0,80}(?:header|authorization))/i.test(tech);
+  if (usesEventSource && sendsBearerHeader) {
+    issues.push("EventSource browser disebut memakai header Authorization Bearer kustom, padahal EventSource tidak mendukung header kustom");
+    affected.add("TECH-STACK.md");
+  }
+
+  const explicitlyNoSessionStorage = /(?:stateless\s+(?:jwt|token)|(?:jwt|token)\s+stateless)[\s\S]{0,140}(?:tanpa|tidak ada|no)\s+(?:penyimpanan\s+)?sesi/i.test(tech)
+    || /(?:tanpa|tidak ada|no)\s+(?:penyimpanan\s+)?sesi[\s\S]{0,140}(?:stateless\s+(?:jwt|token)|(?:jwt|token)\s+stateless)/i.test(tech);
+  const definesActiveSessionStore = /(?:^#{1,6}\s*(?:sessions?|sesi)\b|\b(?:sessions?|sesi)\s*(?:\(|:)|\b(?:session_token|session_id)\b)/im.test(schema);
+  if (explicitlyNoSessionStorage && definesActiveSessionStore) {
+    issues.push("TECH-STACK.md menyatakan JWT stateless tanpa penyimpanan sesi, tetapi SCHEMA.md mendefinisikan penyimpanan sesi aktif");
+    affected.add("TECH-STACK.md");
+    affected.add("SCHEMA.md");
+  }
+
+  const storesRawCredential = /\b(?:access_token|refresh_token|session_token)\b(?![_\s-]*(?:hash|hmac|digest|lookup))/i.test(schema);
+  const mentionsCredentialHash = /\b(?:access_token|refresh_token|session_token)[_\s-]*(?:hash|hmac|digest|lookup)\b/i.test(schema);
+  if (storesRawCredential && !mentionsCredentialHash) {
+    issues.push("SCHEMA.md menyebut penyimpanan access/refresh/session token tanpa hash atau lookup token yang aman");
+    affected.add("SCHEMA.md");
+  }
+
+  const bearerInStreamUrl = /(?:sse|stream|eventsource)[\s\S]{0,160}(?:query(?:\s+string)?|url)[\s\S]{0,80}(?:bearer|access[_\s-]*token|jwt)/i.test(tech)
+    || /(?:query(?:\s+string)?|url)[\s\S]{0,80}(?:bearer|access[_\s-]*token|jwt)[\s\S]{0,160}(?:sse|stream|eventsource)/i.test(tech);
+  if (bearerInStreamUrl) {
+    issues.push("bearer/access token ditaruh pada URL atau query alur streaming");
+    affected.add("TECH-STACK.md");
+  }
+
+  if (!issues.length) return null;
+  const filesAffected = uniqueFiles(affected);
+  return {
+    files: filesAffected,
+    detail: `Auth dan streaming tidak koheren: ${issues.join("; ")}. Dokumen terdampak: ${issueFilesDetail(filesAffected)}.`,
+  };
+}
+
 const TECHNICAL_STATUS_TERMS = new Set([
   "API", "UI", "UX", "PRD", "MVP", "SQL", "HTTP", "HTTPS", "GET", "POST", "PUT", "PATCH", "DELETE",
   "UUID", "PK", "FK", "NOT", "NULL", "UNIQUE", "CHECK", "TEXT", "INTEGER", "BOOLEAN", "JSON", "JWT", "URL",
@@ -1452,6 +1506,17 @@ export function validateBlueprintConsistency(
     missingDocuments.length ? `Dokumen belum cukup lengkap: ${missingDocuments.join(", ")}.` : "PRD, TECH-STACK, UI-UX, dan SCHEMA tersedia.",
   );
 
+  const outputIsolationIssues = findDocumentOutputIsolationIssues(files);
+  addCheck(
+    checks,
+    "document-output-isolation",
+    "Isolasi output dokumen",
+    outputIsolationIssues.length ? "failed" : "passed",
+    outputIsolationIssues.length
+      ? `Isolasi output gagal. Target terdampak: [${outputIsolationIssues.map((issue) => issue.file).join(", ")}]. ${outputIsolationIssues.map((issue) => `${issue.file}: ${issue.detail}`).join(" ")}`
+      : "Setiap file dimulai dengan H1 yang tepat dan tidak memuat H1 dokumen lain.",
+  );
+
   const roleMissing = blueprint.roles.filter((role) =>
     !documentContains(files["PRD.md"], role.name) || !documentContains(files["UI-UX.md"], role.name),
   );
@@ -1645,6 +1710,13 @@ export function validateBlueprintConsistency(
     findSecurityFeasibilityIssue(files),
     "Enkripsi, lookup unik, autentikasi, audit, dan privasi tidak saling bertentangan.",
   );
+  addRepairCheck(
+    checks,
+    "auth-streaming-coherence",
+    "Auth dan streaming koheren",
+    findAuthStreamingCoherenceIssue(files),
+    "Mekanisme auth, penyimpanan token, dan transport streaming dapat diimplementasikan tanpa kontradiksi.",
+  );
 
   const failures = checks.filter((check) => check.status === "failed").map((check) => check.detail);
   const repairs = checks.filter((check) => check.status === "repair").map((check) => check.detail);
@@ -1666,6 +1738,12 @@ export function documentsNeedingQualityFix(report: QualityGateReport): FileName[
   for (const check of report.checks.filter((item) => item.status === "failed" || item.status === "repair")) {
     if (check.id === "four-documents") {
       (Object.keys(DOCUMENT_LABELS) as FileName[]).forEach((file) => files.add(file));
+    }
+    if (check.id === "document-output-isolation") {
+      const targets = check.detail.match(/Target terdampak:\s*\[([^\]]*)\]/i)?.[1] || "";
+      for (const file of DOCUMENT_FILES) {
+        if (targets.includes(file)) files.add(file);
+      }
     }
     if (check.id === "entity-consistency" || check.id === "schema-executable") files.add("SCHEMA.md");
     if (check.id === "lifecycle-consistency") {
@@ -1693,6 +1771,10 @@ export function documentsNeedingQualityFix(report: QualityGateReport): FileName[
     }
     if (["relationship-integrity", "schema-reference-integrity"].includes(check.id)) files.add("SCHEMA.md");
     if (check.id === "security-feasibility") {
+      files.add("TECH-STACK.md");
+      files.add("SCHEMA.md");
+    }
+    if (check.id === "auth-streaming-coherence") {
       files.add("TECH-STACK.md");
       files.add("SCHEMA.md");
     }
@@ -1763,6 +1845,52 @@ export type CompletenessCheck = {
   code: string;
   detail: string;
 };
+
+/**
+ * Enforces the file-boundary contract. A model may use earlier documents as
+ * context, but the generated artifact must contain only its own document
+ * title. This is deliberately strict because ZIP exports are consumed as
+ * independent source files by downstream coding agents.
+ */
+export function validateDocumentOutputIsolation(
+  file: FileName,
+  content: string,
+): CompletenessCheck {
+  const trimmed = content.trim();
+  const expectedTitle = `# ${file}`;
+  const firstLine = trimmed.split(/\r?\n/, 1)[0]?.trim() || "";
+  const h1Titles = [...trimmed.matchAll(/^#[ \t]+(.+?)[ \t]*$/gm)]
+    .map((match) => match[1].replace(/[*_`]/g, "").trim());
+  const foreignDocumentTitles = h1Titles.filter((title) =>
+    DOCUMENT_FILES.some((documentFile) => documentFile !== file && title === documentFile),
+  );
+
+  if (firstLine !== expectedTitle) {
+    return {
+      valid: false,
+      code: "DOCUMENT_TITLE_INVALID",
+      detail: `${file} harus dimulai tepat dengan "${expectedTitle}" sebagai satu-satunya H1.`,
+    };
+  }
+
+  if (h1Titles.length !== 1 || h1Titles[0] !== file || foreignDocumentTitles.length > 0) {
+    const foreign = foreignDocumentTitles.length ? ` H1 dokumen lain terdeteksi: ${foreignDocumentTitles.join(", ")}.` : "";
+    return {
+      valid: false,
+      code: "DOCUMENT_OUTPUT_MIXED",
+      detail: `${file} hanya boleh memiliki satu H1 tepat "${expectedTitle}".${foreign}`,
+    };
+  }
+
+  return { valid: true, code: "OK", detail: "" };
+}
+
+export function findDocumentOutputIsolationIssues(files: GeneratedFiles): Array<{ file: FileName; detail: string }> {
+  return DOCUMENT_FILES
+    .map((file) => ({ file, check: validateDocumentOutputIsolation(file, files[file]) }))
+    .filter(({ check }) => !check.valid)
+    .map(({ file, check }) => ({ file, detail: check.detail }));
+}
 
 /**
  * Detect if text is truncated mid-content.
@@ -1855,7 +1983,12 @@ export function validateDocumentCompleteness(
     };
   }
 
-  // 3. Required sections check
+  // 3. File-boundary contract. Reject cross-document H1 contamination before
+  // a document reaches repair, finalization, or ZIP export.
+  const isolation = validateDocumentOutputIsolation(file, trimmed);
+  if (!isolation.valid) return isolation;
+
+  // 4. Required sections check
   const { missing } = hasRequiredSections(file, trimmed);
   if (missing.length > 0) {
     return {

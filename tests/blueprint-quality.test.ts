@@ -505,4 +505,47 @@ test("validateBlueprintContract accepts multi-lifecycle domains sharing common s
   assert.deepEqual(failures, []);
 });
 
+test("output isolation requires the target H1 and rejects another document title", async () => {
+  const {
+    documentsNeedingQualityFix,
+    validateBlueprintConsistency,
+    validateDocumentOutputIsolation,
+  } = await qualityModule();
 
+  assert.equal(
+    validateDocumentOutputIsolation("TECH-STACK.md", "# TECH-STACK.md\n\n## Stack\nIsi.").valid,
+    true,
+  );
+  assert.equal(
+    validateDocumentOutputIsolation("TECH-STACK.md", "# PRD.md\n\n## Stack\nIsi.").valid,
+    false,
+  );
+  assert.equal(
+    validateDocumentOutputIsolation("TECH-STACK.md", "# TECH-STACK.md\n\n# SCHEMA.md\n\nIsi.").valid,
+    false,
+  );
+
+  const report = validateBlueprintConsistency(blueprint, documents({
+    "PRD.md": "# PRD.md\n\nRingkasan produk.",
+    "TECH-STACK.md": "# TECH-STACK.md\n\n# UI-UX.md\n\nArsitektur dan endpoint /api/v1/beneficiaries.",
+    "UI-UX.md": "# UI-UX.md\n\nWireframe produk.",
+    "SCHEMA.md": "# SCHEMA.md\n\nEntitas produk.",
+  }));
+  const isolation = report.checks.find((check: QualityCheck) => check.id === "document-output-isolation");
+
+  assert.equal(isolation?.status, "failed");
+  assert.deepEqual(documentsNeedingQualityFix({ ...report, checks: [isolation!] }), ["TECH-STACK.md"]);
+});
+
+test("auth and stream coherence catches only explicit incompatible designs", async () => {
+  const { validateBlueprintConsistency } = await qualityModule();
+  const report = validateBlueprintConsistency(blueprint, documents({
+    "TECH-STACK.md": "EventSource membuka SSE dengan Authorization: Bearer JWT. Auth memakai JWT stateless tanpa penyimpanan sesi.",
+    "SCHEMA.md": "## sessions\nsession_token TEXT NOT NULL.",
+  }));
+  const check = report.checks.find((item: QualityCheck) => item.id === "auth-streaming-coherence");
+
+  assert.equal(check?.status, "repair");
+  assert.match(check?.detail || "", /EventSource/i);
+  assert.match(check?.detail || "", /stateless/i);
+});

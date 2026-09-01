@@ -16,6 +16,7 @@ import {
   qualityGateMessage,
   validateBlueprintConsistency,
   validateDocumentCompleteness,
+  findDocumentOutputIsolationIssues,
 } from "@/lib/blueprint-quality";
 import { isAutoModel } from "@/lib/models-config";
 import { ROUTING_VERSION, type ModelsUsedMap } from "@/lib/model-router";
@@ -141,6 +142,13 @@ export async function POST(request: NextRequest) {
       if (!completeness.valid) {
         criticalFailures.push(completeness.detail);
       }
+    }
+
+    // Check 3: File-boundary isolation. This is intentionally independent of
+    // the broader quality report: no ZIP-ready generation may contain the H1
+    // title of another document, even when all other content is complete.
+    for (const issue of findDocumentOutputIsolationIssues(files)) {
+      if (!criticalFailures.includes(issue.detail)) criticalFailures.push(issue.detail);
     }
 
     // Determine if we should block or pass

@@ -40,7 +40,7 @@ const validBlueprint = JSON.stringify({
 });
 
 const validSchema = [
-  "# Schema",
+  "# SCHEMA.md",
   "## Entitas\nTabel permohonan menyimpan data layanan warga.",
   "## Relasi\nPermohonan terhubung dengan pengguna.",
   "## Constraint\nNomor referensi harus unik.",
@@ -178,6 +178,23 @@ test("targeted repair HTTP 200 with an applicable valid patch reports SUCCESS", 
 
   assert.match(repaired, /changed fields/);
   assert.deepEqual(outcomes, [{ attemptId: "repair-valid", status: "SUCCESS" }]);
+});
+
+test("dependent document prompts pass earlier documents as read-only context", async () => {
+  const { parseBlueprintContract } = await qualityModule();
+  const { getDocumentSystemPrompt } = await promptsModule();
+  const contract = parseBlueprintContract(validBlueprint);
+  const prompt = getDocumentSystemPrompt("SCHEMA.md", contract, {
+    "PRD.md": "# PRD.md\n\nPRD khusus.",
+    "TECH-STACK.md": "# TECH-STACK.md\n\nTECH khusus.",
+    "UI-UX.md": "# UI-UX.md\n\nUI khusus.",
+  });
+
+  assert.match(prompt, /PRD\.md, TECH-STACK\.md, and UI-UX\.md are READ-ONLY CONTEXT/i);
+  assert.match(prompt, /Generate ONLY SCHEMA\.md/i);
+  assert.match(prompt, /--- BEGIN READ-ONLY PRD\.md ---/);
+  assert.match(prompt, /The first non-empty line MUST be exactly: # SCHEMA\.md/);
+  assert.match(prompt, /Do not reproduce the context documents/i);
 });
 
 test("targeted repair HTTP 200 with an unappliable patch reports FAILED", async () => {

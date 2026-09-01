@@ -75,14 +75,18 @@ export default function DocumentViewer({
     }
   }
 
-  function handleDownloadZip() {
+  async function handleDownloadZip() {
     const hasContent = FILES.some(({ name }) => files[name].trim().length > 0);
     if (!hasContent) {
       toast.error("Belum ada dokumen untuk diunduh.");
       return;
     }
-    downloadAllAsZip(files);
-    toast.success("File ZIP 4 dokumen berhasil diunduh.");
+    try {
+      await downloadAllAsZip(files);
+      toast.success("File ZIP 4 dokumen berhasil diunduh.");
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "ZIP belum dapat dibuat.");
+    }
   }
 
   return (
