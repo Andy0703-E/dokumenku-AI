@@ -34,7 +34,7 @@ test("hasAllDocumentsReady correctly detects completion of all 4 documents", asy
   assert.equal(hasAllDocumentsReady(completeFiles), true);
 });
 
-test("generateVibeCoderPrompt produces a complete master prompt containing all 4 documents and roadmap", async () => {
+test("generateVibeCoderPrompt references the four authoritative files without duplicating them", async () => {
   const { generateVibeCoderPrompt } = await promptModule();
   const completeFiles: GeneratedFiles = {
     "PRD.md": "# PRD Proyek Toko\nFitur: Checkout, Keranjang",
@@ -57,16 +57,16 @@ test("generateVibeCoderPrompt produces a complete master prompt containing all 4
   assert.ok(prompt.includes("FASE 5: Integrasi Full-Stack & State Management"));
   assert.ok(prompt.includes("FASE 6: Validasi & Edge-Case Testing"));
 
-  // Verify all 4 documents are embedded intact
-  assert.ok(prompt.includes("DOKUMEN 1 / 4: PRD.md"));
-  assert.ok(prompt.includes("# PRD Proyek Toko\nFitur: Checkout, Keranjang"));
-
-  assert.ok(prompt.includes("DOKUMEN 2 / 4: TECH-STACK.md"));
-  assert.ok(prompt.includes("# Tech Stack Proyek Toko\nStack: Next.js 15, Prisma"));
-
-  assert.ok(prompt.includes("DOKUMEN 3 / 4: UI-UX.md"));
-  assert.ok(prompt.includes("# UI/UX Proyek Toko\nDesign System: #0D9488"));
-
-  assert.ok(prompt.includes("DOKUMEN 4 / 4: SCHEMA.md"));
-  assert.ok(prompt.includes("# Database Schema\nTable: Users, Orders"));
+  // The ZIP already contains the source files, so this prompt must reference
+  // rather than duplicate each specification document.
+  for (const file of ["PRD.md", "TECH-STACK.md", "UI-UX.md", "SCHEMA.md"]) {
+    assert.ok(prompt.includes(`\`${file}\``));
+  }
+  assert.ok(prompt.includes("SUMBER SPESIFIKASI OTORITATIF"));
+  assert.ok(prompt.includes("DEFINITION OF DONE"));
+  assert.ok(!prompt.includes("# PRD Proyek Toko\nFitur: Checkout, Keranjang"));
+  assert.ok(!prompt.includes("# Tech Stack Proyek Toko\nStack: Next.js 15, Prisma"));
+  assert.ok(!prompt.includes("# UI/UX Proyek Toko\nDesign System: #0D9488"));
+  assert.ok(!prompt.includes("# Database Schema\nTable: Users, Orders"));
+  assert.ok(prompt.length < 6_000);
 });

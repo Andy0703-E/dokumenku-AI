@@ -151,6 +151,22 @@ export async function POST(request: NextRequest) {
       if (!criticalFailures.includes(issue.detail)) criticalFailures.push(issue.detail);
     }
 
+    // Check 4: Semantic contradictions that would produce an implementation
+    // that cannot safely run. Unlike stylistic warnings, these must be
+    // repaired before a generation becomes ZIP-ready.
+    const CRITICAL_SEMANTIC_CHECKS = new Set([
+      "schema-referential-action",
+      "auth-persistence",
+      "conversation-search",
+      "streaming-retry-safety",
+      "erd-relationship-integrity",
+    ]);
+    for (const check of report.checks) {
+      if (CRITICAL_SEMANTIC_CHECKS.has(check.id) && (check.status === "failed" || check.status === "repair")) {
+        if (!criticalFailures.includes(check.detail)) criticalFailures.push(check.detail);
+      }
+    }
+
     // Determine if we should block or pass
     const hasCriticalIssues = criticalFailures.length > 0;
     report.passed = !hasCriticalIssues;

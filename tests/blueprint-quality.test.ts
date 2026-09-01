@@ -549,3 +549,50 @@ test("auth and stream coherence catches only explicit incompatible designs", asy
   assert.match(check?.detail || "", /EventSource/i);
   assert.match(check?.detail || "", /stateless/i);
 });
+
+test("critical semantic gate blocks incompatible foreign keys, auth gaps, search gaps, unsafe retry, and invalid ERD", async () => {
+  const { documentsNeedingQualityFix, validateBlueprintConsistency } = await qualityModule();
+  const report = validateBlueprintConsistency(blueprint, documents({
+    "PRD.md": "Pengguna dapat Login dan Register lalu memakai pencarian conversation berdasarkan judul dan isi pesan.",
+    "TECH-STACK.md": "Gunakan Auth.js. Untuk AI streaming, retry maksimal dua kali setelah token pertama diterima. Saat 429 gunakan exponential backoff. Timeout 60 detik.",
+    "SCHEMA.md": [
+      "## users\n| Kolom | Tipe |\n| --- | --- |\n| id | UUID |",
+      "## conversations\n| Kolom | Tipe |\n| --- | --- |\n| model_id | UUID | NOT NULL |\nFOREIGN KEY (model_id) REFERENCES model_cache(id) ON DELETE SET NULL",
+      "## model_cache\n| Kolom | Tipe |\n| --- | --- |\n| is_active | BOOLEAN |\n| status | ENUM('aktif', 'tidak tersedia', 'deprecated') |\nModelCache (self-reference) | N:M",
+    ].join("\n\n"),
+  }));
+  const repairIds = report.checks
+    .filter((check: QualityCheck) => check.status === "repair")
+    .map((check: QualityCheck) => check.id);
+  const warningIds = report.checks
+    .filter((check: QualityCheck) => check.status === "warning")
+    .map((check: QualityCheck) => check.id);
+
+  for (const id of [
+    "schema-referential-action",
+    "auth-persistence",
+    "conversation-search",
+    "streaming-retry-safety",
+    "erd-relationship-integrity",
+  ]) {
+    assert.ok(repairIds.includes(id), `expected ${id} to require repair`);
+  }
+  assert.ok(warningIds.includes("streaming-timeout-policy"));
+  assert.ok(warningIds.includes("redundant-state-modeling"));
+  assert.deepEqual(
+    documentsNeedingQualityFix(report),
+    ["PRD.md", "TECH-STACK.md", "UI-UX.md", "SCHEMA.md"],
+  );
+});
+
+test("streaming retry gate accepts a pre-token retry and the three timeout classes", async () => {
+  const { validateBlueprintConsistency } = await qualityModule();
+  const report = validateBlueprintConsistency(blueprint, documents({
+    "TECH-STACK.md": "AI streaming via SSE retry hanya sebelum token pertama. Untuk HTTP 429, patuhi Retry-After. Gunakan first-token timeout, stream idle timeout, dan total generation timeout.",
+  }));
+  const retry = report.checks.find((check: QualityCheck) => check.id === "streaming-retry-safety");
+  const timeout = report.checks.find((check: QualityCheck) => check.id === "streaming-timeout-policy");
+
+  assert.equal(retry?.status, "passed");
+  assert.equal(timeout?.status, "passed");
+});

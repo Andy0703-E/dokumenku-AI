@@ -126,6 +126,13 @@ const USER_FACING_NOTE_COPY: Record<string, { title: string; description: string
   "schema-reference-integrity": { title: "Referensi data perlu diperbaiki", description: "Beberapa index atau hubungan data perlu disesuaikan dengan struktur tabel yang ada." },
   "security-feasibility": { title: "Penerapan keamanan perlu diselaraskan", description: "Rancangan keamanan dan struktur data perlu dibuat selaras agar dapat diterapkan dengan aman." },
   "auth-streaming-coherence": { title: "Auth dan streaming perlu diselaraskan", description: "Mekanisme login, penyimpanan token, dan alur data real-time perlu menggunakan rancangan yang konsisten dan aman." },
+  "schema-referential-action": { title: "Aksi relasi data perlu diperbaiki", description: "Aturan foreign key tidak boleh bertentangan dengan kewajiban kolom data." },
+  "auth-persistence": { title: "Strategi login perlu dilengkapi", description: "Login dan pendaftaran memerlukan satu strategi autentikasi serta penyimpanan akun yang dapat diterapkan." },
+  "conversation-search": { title: "Pencarian percakapan perlu didukung", description: "Fitur pencarian memerlukan strategi query dan indeks database yang jelas." },
+  "streaming-retry-safety": { title: "Retry streaming perlu diamankan", description: "Retry tidak boleh menggandakan keluaran AI setelah stream mulai diterima." },
+  "streaming-timeout-policy": { title: "Batas waktu streaming perlu diperjelas", description: "Streaming perlu membedakan batas token pertama, jeda stream, dan durasi total." },
+  "redundant-state-modeling": { title: "Status data perlu disederhanakan", description: "Satu status bisnis sebaiknya tidak disimpan dalam dua field yang artinya sama." },
+  "erd-relationship-integrity": { title: "Relasi ERD perlu diperbaiki", description: "Kardinalitas ERD harus sesuai dengan foreign key dan entitas yang nyata." },
   "document-output-isolation": { title: "Dokumen tercampur", description: "Setiap file harus memiliki satu judul dokumen yang tepat dan tidak boleh memuat judul dokumen lain." },
 };
 
@@ -990,6 +997,143 @@ function findAuthStreamingCoherenceIssue(files: GeneratedFiles): SemanticIssue |
   };
 }
 
+function hasSchemaTable(schema: string, table: string): boolean {
+  const escapedTable = escapeRegExp(table).replace(/s$/, "s?");
+  const optionalCodeFence = "`?";
+  return new RegExp(
+    `(?:^#{2,6}\\s+(?:tabel\\s*[:—-]?\\s*)?${optionalCodeFence}${escapedTable}${optionalCodeFence}\\s*$|\\bCREATE\\s+TABLE\\s+(?:IF\\s+NOT\\s+EXISTS\\s+)?${optionalCodeFence}${escapedTable}${optionalCodeFence}\\b|\\b${escapedTable}\\s*[:(])`,
+    "im",
+  ).test(schema);
+}
+
+function findSchemaReferentialActionIssue(files: GeneratedFiles): SemanticIssue | null {
+  const schema = files["SCHEMA.md"];
+  const issues = new Set<string>();
+  for (const foreignKey of schema.matchAll(/\bFOREIGN\s+KEY\s*\(\s*`?([a-z][a-z0-9_]*)`?\s*\)[\s\S]{0,240}?\bON\s+DELETE\s+SET\s+NULL\b/gi)) {
+    const column = foreignKey[1].toLowerCase();
+    const optionalCodeFence = "`?";
+    const definition = new RegExp(
+      `(?:^|\\n)\\s*(?:\\|\\s*)?${optionalCodeFence}${escapeRegExp(column)}${optionalCodeFence}(?:\\s*\\||\\s+)[^\\n]{0,180}\\bNOT\\s+NULL\\b`,
+      "im",
+    );
+    if (definition.test(schema)) {
+      issues.add(`${column} didefinisikan NOT NULL tetapi foreign key-nya memakai ON DELETE SET NULL`);
+    }
+  }
+
+  if (!issues.size) return null;
+  return {
+    files: ["SCHEMA.md"],
+    detail: `Aksi referensial SCHEMA bertentangan: ${[...issues].join("; ")}. Pilih kolom nullable + ON DELETE SET NULL, atau pertahankan NOT NULL + ON DELETE RESTRICT/CASCADE.`,
+  };
+}
+
+function findAuthPersistenceIssue(files: GeneratedFiles): SemanticIssue | null {
+  const product = files["PRD.md"];
+  const tech = files["TECH-STACK.md"];
+  const schema = files["SCHEMA.md"];
+  const requiresCredentials = /\b(?:login|masuk)\b[\s\S]{0,100}\b(?:register|daftar)\b|\b(?:register|daftar)\b[\s\S]{0,100}\b(?:login|masuk)\b/i.test(product);
+  const mentionsAuth = /\b(?:auth\.js|nextauth|credentials?(?:\s+provider)?|password[_\s-]*hash|argon2(?:id)?|bcrypt)\b/i.test(tech);
+  if (!requiresCredentials && !mentionsAuth) return null;
+
+  const hasPasswordHash = /\bpassword[_\s-]*hash\b/i.test(schema);
+  const hasAuthJsAdapter = hasSchemaTable(schema, "accounts") && hasSchemaTable(schema, "sessions");
+  const usesAuthJs = /\b(?:auth\.js|nextauth)\b/i.test(tech);
+  const declaresCredentialStrategy = /\b(?:credentials?(?:\s+provider)?|password[_\s-]*hash|argon2(?:id)?|bcrypt)\b/i.test(tech);
+  const issues: string[] = [];
+
+  if (!hasPasswordHash && !hasAuthJsAdapter) {
+    issues.push("Login/Register tidak memiliki password_hash atau tabel adapter Auth.js (accounts dan sessions)");
+  }
+  if (usesAuthJs && !declaresCredentialStrategy && !hasAuthJsAdapter) {
+    issues.push("TECH-STACK.md menyebut Auth.js tanpa menyatakan adapter lengkap atau Credentials + password hash");
+  }
+
+  if (!issues.length) return null;
+  return {
+    files: ["TECH-STACK.md", "SCHEMA.md"],
+    detail: `Persistensi auth belum dapat diimplementasikan: ${issues.join("; ")}. Tentukan satu strategi kanonis: Credentials dengan password_hash kuat, atau Auth.js adapter lengkap.`,
+  };
+}
+
+function findConversationSearchIssue(files: GeneratedFiles): SemanticIssue | null {
+  const product = files["PRD.md"];
+  const tech = files["TECH-STACK.md"];
+  const schema = files["SCHEMA.md"];
+  const requiresConversationSearch = /\b(?:search|pencarian|cari)\b[\s\S]{0,100}\b(?:conversation|percakapan)\b|\b(?:conversation|percakapan)\b[\s\S]{0,100}\b(?:search|pencarian|cari)\b/i.test(product);
+  if (!requiresConversationSearch) return null;
+
+  const hasSearchStrategy = /\b(?:pg_trgm|trigram|to_tsvector|tsvector|full[ -]?text|gin\s+index|search\s+index)\b/i.test(tech);
+  const hasSearchIndex = /\b(?:pg_trgm|trigram|to_tsvector|tsvector|full[ -]?text|gin\s+index|create\s+index[^\n]{0,180}(?:conversation|message))\b/i.test(schema);
+  const issues: string[] = [];
+  if (!hasSearchStrategy) issues.push("TECH-STACK.md belum memilih strategi pencarian");
+  if (!hasSearchIndex) issues.push("SCHEMA.md belum menyediakan indeks/search vector untuk conversations.title atau messages.content");
+  if (!issues.length) return null;
+
+  return {
+    files: ["TECH-STACK.md", "SCHEMA.md"],
+    detail: `Fitur pencarian conversation belum diterjemahkan ke rancangan teknis: ${issues.join("; ")}.`,
+  };
+}
+
+function findStreamingRetrySafetyIssue(files: GeneratedFiles): SemanticIssue | null {
+  const tech = files["TECH-STACK.md"];
+  const discussesStreaming = /\b(?:stream(?:ing)?|sse|eventsource|first[ -]?token|token pertama)\b/i.test(tech);
+  const discussesRetry = /\b(?:retry|ulangi|percobaan ulang|backoff)\b/i.test(tech);
+  if (!discussesStreaming || !discussesRetry) return null;
+
+  const retryAfterToken = /\b(?:retry|ulangi|percobaan ulang)\b[^.!?\n]{0,120}\b(?:setelah|sesudah|after)\b[^.!?\n]{0,80}\b(?:token pertama|first[ -]?token|token diterima)\b|\b(?:token pertama|first[ -]?token)\b[^.!?\n]{0,50}\b(?:diterima|received)\b[^.!?\n]{0,60}\b(?:retry|ulangi|percobaan ulang)\b/i.test(tech);
+  const retryBeforeFirstToken = /\b(?:sebelum|before)\b[\s\S]{0,60}\b(?:token pertama|first[ -]?token)\b|\b(?:token pertama|first[ -]?token)\b[\s\S]{0,60}\b(?:belum|not received|tidak diterima)\b/i.test(tech);
+  const retryAfter429 = /\b429\b/i.test(tech) && /\bretry-after\b/i.test(tech);
+  if (!retryAfterToken && retryBeforeFirstToken && (!/\b429\b/i.test(tech) || retryAfter429)) return null;
+
+  const detail = retryAfterToken
+    ? "TECH-STACK.md mengizinkan retry setelah token streaming diterima"
+    : /\b429\b/i.test(tech) && !retryAfter429
+      ? "retry 429 tidak menyebut penghormatan terhadap Retry-After"
+      : "kebijakan retry streaming belum membatasi retry sebelum token pertama diterima";
+  return {
+    files: ["TECH-STACK.md"],
+    detail: `Retry streaming tidak aman: ${detail}. Retry otomatis hanya boleh sebelum token pertama; setelah output parsial, tampilkan kelanjutan atau error yang dapat dipulihkan tanpa memulai generasi kedua.`,
+  };
+}
+
+function findStreamingTimeoutPolicyIssue(files: GeneratedFiles): SemanticIssue | null {
+  const tech = files["TECH-STACK.md"];
+  if (!/\b(?:stream(?:ing)?|sse|eventsource)\b/i.test(tech) || !/\btimeout\b/i.test(tech)) return null;
+  const hasFirstToken = /\b(?:first[ -]?token|token pertama)\b[\s-]*timeout|\btimeout\b[\s-]*(?:first[ -]?token|token pertama)\b/i.test(tech);
+  const hasIdle = /\b(?:idle|jeda|diam)\b[\s-]*timeout|\btimeout\b[\s-]*(?:idle|jeda|diam)\b/i.test(tech);
+  const hasTotal = /\b(?:total|keseluruhan)\b[\s-]*(?:generation|generasi|request)?\s*timeout|\btimeout\b[\s-]*(?:total|keseluruhan)\b/i.test(tech);
+  if (hasFirstToken && hasIdle && hasTotal) return null;
+
+  const missing = [!hasFirstToken && "first-token", !hasIdle && "stream idle", !hasTotal && "total generation"].filter(Boolean).join(", ");
+  return {
+    files: ["TECH-STACK.md"],
+    detail: `Kebijakan timeout streaming masih generik; belum ada ${missing} timeout yang terpisah.`,
+  };
+}
+
+function findRedundantStateModelingIssue(files: GeneratedFiles): SemanticIssue | null {
+  const schema = files["SCHEMA.md"];
+  const modelCacheSection = /(?:^#{2,6}\s*(?:tabel\s*[:—-]?\s*)?model[_\s-]*cache\b[\s\S]{0,1800}|\bmodel[_\s-]*cache\s*[:(][\s\S]{0,1800})/im.exec(schema)?.[0] || "";
+  if (!modelCacheSection || !/\bis[_\s-]*active\b/i.test(modelCacheSection) || !/\bstatus\b/i.test(modelCacheSection)) return null;
+  if (!/\b(?:aktif|active|tidak tersedia|unavailable|deprecated)\b/i.test(modelCacheSection)) return null;
+  return {
+    files: ["SCHEMA.md"],
+    detail: "model_cache menyimpan is_active dan status yang sama-sama merepresentasikan ketersediaan model. Gunakan status saja, atau jelaskan is_active sebagai konsep terpisah.",
+  };
+}
+
+function findErdRelationshipIntegrityIssue(files: GeneratedFiles): SemanticIssue | null {
+  const schema = files["SCHEMA.md"];
+  const hasInvalidSelfReference = /\bmodel[_\s-]*cache\b[\s\S]{0,160}\b(?:self[ -]?reference|referensi diri)\b[\s\S]{0,160}\b(?:n\s*:\s*m|many[ -]?to[ -]?many)\b|\b(?:self[ -]?reference|referensi diri)\b[\s\S]{0,160}\bmodel[_\s-]*cache\b[\s\S]{0,160}\b(?:n\s*:\s*m|many[ -]?to[ -]?many)\b/i.test(schema);
+  if (!hasInvalidSelfReference) return null;
+  return {
+    files: ["SCHEMA.md"],
+    detail: "ERD menyatakan ModelCache self-reference N:M tanpa relasi pendukung. ModelCache harus direlasikan ke Conversations, Messages, atau UserSettings sesuai foreign key yang ada.",
+  };
+}
+
 const TECHNICAL_STATUS_TERMS = new Set([
   "API", "UI", "UX", "PRD", "MVP", "SQL", "HTTP", "HTTPS", "GET", "POST", "PUT", "PATCH", "DELETE",
   "UUID", "PK", "FK", "NOT", "NULL", "UNIQUE", "CHECK", "TEXT", "INTEGER", "BOOLEAN", "JSON", "JWT", "URL",
@@ -1483,6 +1627,10 @@ function addRepairCheck(checks: QualityCheck[], id: string, label: string, issue
   addCheck(checks, id, label, issue ? "repair" : "passed", issue?.detail || successDetail);
 }
 
+function addWarningCheck(checks: QualityCheck[], id: string, label: string, issue: SemanticIssue | null, successDetail: string) {
+  addCheck(checks, id, label, issue ? "warning" : "passed", issue?.detail || successDetail);
+}
+
 export function validateBlueprintConsistency(
   blueprint: BlueprintContract,
   files: GeneratedFiles,
@@ -1717,6 +1865,55 @@ export function validateBlueprintConsistency(
     findAuthStreamingCoherenceIssue(files),
     "Mekanisme auth, penyimpanan token, dan transport streaming dapat diimplementasikan tanpa kontradiksi.",
   );
+  addRepairCheck(
+    checks,
+    "schema-referential-action",
+    "Aksi referensial SCHEMA valid",
+    findSchemaReferentialActionIssue(files),
+    "Kolom foreign key dan aksi ON DELETE dapat dijalankan bersama.",
+  );
+  addRepairCheck(
+    checks,
+    "auth-persistence",
+    "Login memiliki persistensi auth",
+    findAuthPersistenceIssue(files),
+    "Login/Register menggunakan satu strategi auth yang memiliki penyimpanan akun yang sesuai.",
+  );
+  addRepairCheck(
+    checks,
+    "conversation-search",
+    "Search conversation memiliki strategi dan indeks",
+    findConversationSearchIssue(files),
+    "Fitur pencarian conversation didukung strategi teknis dan indeks database.",
+  );
+  addRepairCheck(
+    checks,
+    "streaming-retry-safety",
+    "Retry streaming aman",
+    findStreamingRetrySafetyIssue(files),
+    "Retry hanya terjadi sebelum token pertama dan menghormati Retry-After untuk 429.",
+  );
+  addWarningCheck(
+    checks,
+    "streaming-timeout-policy",
+    "Timeout streaming terpisah",
+    findStreamingTimeoutPolicyIssue(files),
+    "Timeout first-token, idle, dan total generation dijelaskan secara terpisah.",
+  );
+  addWarningCheck(
+    checks,
+    "redundant-state-modeling",
+    "State schema tidak redundan",
+    findRedundantStateModelingIssue(files),
+    "Setiap field status memiliki tanggung jawab bisnis yang berbeda.",
+  );
+  addRepairCheck(
+    checks,
+    "erd-relationship-integrity",
+    "Kardinalitas ERD valid",
+    findErdRelationshipIntegrityIssue(files),
+    "Kardinalitas ERD didukung foreign key atau tabel penghubung yang nyata.",
+  );
 
   const failures = checks.filter((check) => check.status === "failed").map((check) => check.detail);
   const repairs = checks.filter((check) => check.status === "repair").map((check) => check.detail);
@@ -1778,6 +1975,14 @@ export function documentsNeedingQualityFix(report: QualityGateReport): FileName[
       files.add("TECH-STACK.md");
       files.add("SCHEMA.md");
     }
+    if (["schema-referential-action", "erd-relationship-integrity"].includes(check.id)) {
+      files.add("SCHEMA.md");
+    }
+    if (["auth-persistence", "conversation-search"].includes(check.id)) {
+      files.add("TECH-STACK.md");
+      files.add("SCHEMA.md");
+    }
+    if (check.id === "streaming-retry-safety") files.add("TECH-STACK.md");
   }
   return DOCUMENTS_ORDER.filter((file) => files.has(file));
 }
