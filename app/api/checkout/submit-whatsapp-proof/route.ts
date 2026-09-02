@@ -69,10 +69,9 @@ export async function POST(request: NextRequest) {
           ai_status = 'payment_pending_admin',
           ai_analysis = 'Bukti pembayaran dikirim pengguna melalui WhatsApp. Menunggu persetujuan administrator.',
           ocr_transaction_id = ?,
-          ocr_status = 'MANUAL_WHATSAPP',
-          updated_at = ?
+          ocr_status = 'MANUAL_WHATSAPP'
         WHERE id = ? AND status = 'CREATED'`,
-        args: [now, manualReference, now, order.id],
+        args: [now, manualReference, order.id],
       });
 
       if (updated.rowsAffected !== 1) {
