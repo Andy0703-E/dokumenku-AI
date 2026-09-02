@@ -997,7 +997,7 @@ export default function AdminDashboard() {
                 </span>
               </div>
 
-              {data.orders && data.orders.filter((o) => o.status === "pending").length > 0 && (
+              {data.orders && data.orders.filter((o) => o.status === "PENDING_REVIEW").length > 0 && (
                 <span
                   style={{
                     fontSize: "0.76rem",
@@ -1012,7 +1012,7 @@ export default function AdminDashboard() {
                     gap: "6px",
                   }}
                 >
-                  <Clock size={13} /> {data.orders.filter((o) => o.status === "pending").length} Menunggu Verifikasi
+                  <Clock size={13} /> {data.orders.filter((o) => o.status === "PENDING_REVIEW").length} Menunggu Verifikasi
                 </span>
               )}
             </div>
@@ -1209,7 +1209,7 @@ export default function AdminDashboard() {
                           })}
                         </td>
                         <td style={{ textAlign: "right" }}>
-                          {ord.status !== "PAID" && ord.status !== "paid" && ord.status !== "REJECTED" && ord.status !== "cancelled" ? (
+                          {ord.status === "PENDING_REVIEW" ? (
                             <div style={{ display: "inline-flex", gap: "6px", justifyContent: "flex-end" }}>
                               <button
                                 type="button"
