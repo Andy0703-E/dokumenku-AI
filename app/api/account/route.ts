@@ -33,7 +33,7 @@ export async function GET(request: Request) {
       };
 
       if (isSummaryRequest) {
-        return NextResponse.json(summary);
+        return NextResponse.json(summary, { headers: { "Cache-Control": "no-store, private" } });
       }
 
       const [generationsResult, transactionsResult] = await Promise.all([
@@ -61,11 +61,14 @@ export async function GET(request: Request) {
         createdAt: string;
       }>;
 
-      return NextResponse.json({ ...summary, generations, transactions });
+      return NextResponse.json(
+        { ...summary, generations, transactions },
+        { headers: { "Cache-Control": "no-store, private" } },
+      );
     } catch (error) {
       return NextResponse.json(
         { error: error instanceof Error ? error.message : "Akun tidak dapat dimuat." },
-        { status: 503 },
+        { status: 503, headers: { "Cache-Control": "no-store, private" } },
       );
     }
   }
@@ -81,12 +84,15 @@ export async function GET(request: Request) {
     }
   }
 
-  const response = NextResponse.json({
-    authenticated: false,
-    credits: guestCredits,
-    generations: [],
-    transactions: [],
-  });
+  const response = NextResponse.json(
+    {
+      authenticated: false,
+      credits: guestCredits,
+      generations: [],
+      transactions: [],
+    },
+    { headers: { "Cache-Control": "no-store, private" } },
+  );
 
   if (guestCookie === undefined) {
     response.cookies.set("dokumenku_guest", String(guestCredits), {

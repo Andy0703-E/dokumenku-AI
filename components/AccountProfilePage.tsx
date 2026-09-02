@@ -52,21 +52,37 @@ export default function AccountProfilePage() {
   const [activeTab, setActiveTab] = useState<"projects" | "transactions">("projects");
   const [isLoggingOut, setIsLoggingOut] = useState(false);
 
-  async function loadAccountData() {
-    setIsLoading(true);
+  async function loadAccountData(showLoading = false) {
+    if (showLoading) setIsLoading(true);
     try {
-      const res = await fetch("/api/account");
+      const res = await fetch("/api/account", { cache: "no-store" });
       const payload = (await res.json()) as AccountData;
       setData(payload);
     } catch {
       setData(null);
     } finally {
-      setIsLoading(false);
+      if (showLoading) setIsLoading(false);
     }
   }
 
   useEffect(() => {
-    void loadAccountData();
+    void loadAccountData(true);
+
+    const refreshAccount = () => void loadAccountData();
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === "visible") refreshAccount();
+    };
+    const refreshTimer = window.setInterval(() => {
+      if (document.visibilityState === "visible") refreshAccount();
+    }, 10_000);
+
+    window.addEventListener("focus", refreshAccount);
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+    return () => {
+      window.clearInterval(refreshTimer);
+      window.removeEventListener("focus", refreshAccount);
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
+    };
   }, []);
 
   async function handleLogout() {

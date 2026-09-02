@@ -169,7 +169,7 @@ export default function StudioWorkbench({
 
   async function loadAccount() {
     try {
-      const response = await fetch("/api/account?view=summary");
+      const response = await fetch("/api/account?view=summary", { cache: "no-store" });
       const payload = (await response.json()) as {
         authenticated?: boolean;
         role?: string;
@@ -200,6 +200,22 @@ export default function StudioWorkbench({
   useEffect(() => {
     void checkProviderHealth();
     void loadAccount();
+
+    const refreshAccount = () => void loadAccount();
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === "visible") refreshAccount();
+    };
+    const refreshTimer = window.setInterval(() => {
+      if (document.visibilityState === "visible") refreshAccount();
+    }, 10_000);
+
+    window.addEventListener("focus", refreshAccount);
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+    return () => {
+      window.clearInterval(refreshTimer);
+      window.removeEventListener("focus", refreshAccount);
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
+    };
   }, []);
 
   function validatePrompt(text: string): boolean {
