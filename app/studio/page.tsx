@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState, useCallback } from "react";
-import { FolderOpen, Plus, FileText, Clock, ArrowRight, Trash2 } from "lucide-react";
+import { FolderOpen, Plus, FileText, Clock, ArrowLeft, ArrowRight, Trash2 } from "lucide-react";
 
 type Project = {
   projectId: string;
@@ -110,20 +110,36 @@ export default function StudioPage() {
               Kelola semua proyek dokumen Anda di satu tempat.
             </p>
           </div>
-          <button
-            type="button"
-            className="btn-primary"
-            onClick={() => setShowNewModal(true)}
-            style={{
-              display: "inline-flex",
-              alignItems: "center",
-              gap: "6px",
-              padding: "10px 20px",
-              fontSize: "0.88rem",
-            }}
-          >
-            <Plus size={16} /> Proyek Baru
-          </button>
+          <div style={{ display: "flex", alignItems: "center", gap: "10px", flexWrap: "wrap" }}>
+            <a
+              href="/"
+              className="btn-secondary"
+              style={{
+                display: "inline-flex",
+                alignItems: "center",
+                gap: "6px",
+                padding: "10px 16px",
+                fontSize: "0.88rem",
+                textDecoration: "none",
+              }}
+            >
+              <ArrowLeft size={16} /> Kembali ke Beranda
+            </a>
+            <button
+              type="button"
+              className="btn-primary"
+              onClick={() => setShowNewModal(true)}
+              style={{
+                display: "inline-flex",
+                alignItems: "center",
+                gap: "6px",
+                padding: "10px 20px",
+                fontSize: "0.88rem",
+              }}
+            >
+              <Plus size={16} /> Proyek Baru
+            </button>
+          </div>
         </div>
 
         {/* Project Grid */}

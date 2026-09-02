@@ -18,6 +18,7 @@ import {
   Eye,
   Zap,
   Copy,
+  ArrowLeft,
 } from "lucide-react";
 import { toast } from "sonner";
 import ReactMarkdown from "react-markdown";
@@ -413,6 +414,13 @@ export default function StudioWorkbench({
         </div>
 
         <div className="studio-navbar-actions">
+          <a
+            href="/studio"
+            className="studio-action-link"
+            title="Kembali ke daftar proyek"
+          >
+            <ArrowLeft size={14} /> <span>Kembali ke Studio</span>
+          </a>
           <div className="studio-credit-badge">
             <Coins size={14} color="var(--amber)" />
             <span>{creditStatus}</span>
