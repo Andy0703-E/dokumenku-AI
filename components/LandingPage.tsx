@@ -629,7 +629,7 @@ export default function LandingPage({ onStart }: LandingPageProps) {
             <ShieldCheck size={22} strokeWidth={2.2} />
           </div>
           <div>
-            <strong>Pembayaran diverifikasi admin, bukan ditolak oleh AI</strong>
+            <strong>Pembayaran diverifikasi admin</strong>
             <p>Kirim bukti QRIS langsung ke WhatsApp admin dari invoice Anda. Admin memeriksa pembayaran sebelum kredit ditambahkan.</p>
           </div>
           <a href="/pricing" className="landing-payment-trust-link">Lihat cara pembayaran <ArrowRight size={16} /></a>
