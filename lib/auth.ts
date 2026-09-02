@@ -12,6 +12,7 @@ export type SessionRole = "user" | "admin";
 type SessionPayload = {
   email: string;
   role: SessionRole;
+  issuedAt: number;
   expiresAt: number;
 };
 
@@ -20,6 +21,16 @@ function sessionSecret(): string {
   if (configured) return configured;
   if (process.env.NODE_ENV !== "production") return "dokumenku-local-development-session-secret";
   throw new Error("APP_SESSION_SECRET belum dikonfigurasi.");
+}
+
+// `npm start` also sets NODE_ENV=production.  Do not mark the cookie Secure
+// for a local HTTP preview, otherwise browsers discard it and the admin looks
+// logged out on every refresh. Vercel (and an explicitly secure deployment)
+// keeps the Secure flag enabled.
+function useSecureSessionCookie(): boolean {
+  return process.env.NODE_ENV === "production" && (
+    process.env.VERCEL === "1" || process.env.COOKIE_SECURE === "true"
+  );
 }
 
 function encodePayload(payload: SessionPayload): string {
@@ -43,7 +54,7 @@ function decodeSession(value: string | undefined): SessionPayload | null {
 
   try {
     const payload = JSON.parse(Buffer.from(encodedPayload, "base64url").toString("utf8")) as SessionPayload;
-    if (!payload.email || !["user", "admin"].includes(payload.role) || payload.expiresAt <= Date.now()) return null;
+    if (!payload.email || !["user", "admin"].includes(payload.role) || !payload.issuedAt || payload.expiresAt <= Date.now()) return null;
     return payload;
   } catch {
     return null;
@@ -57,32 +68,73 @@ export async function getCurrentSession(): Promise<SessionPayload | null> {
 
 export async function getCurrentUser(): Promise<SessionPayload | null> {
   const session = await getCurrentSession();
-  return session && ["user", "admin"].includes(session.role) ? session : null;
+  if (!session || !["user", "admin"].includes(session.role)) return null;
+  if (session.role === "admin") return getCurrentAdmin();
+
+  // A deleted user must not be able to keep using a previously issued signed
+  // cookie. Unlike admins, normal user sessions do not otherwise have a
+  // server-side record to revoke.
+  try {
+    const { getDatabase } = await import("@/db");
+    const db = await getDatabase();
+    const result = await db.execute({
+      sql: "SELECT email FROM users WHERE LOWER(email) = LOWER(?) LIMIT 1",
+      args: [session.email],
+    });
+    return result.rows[0] ? session : null;
+  } catch {
+    return null;
+  }
 }
 
 export async function getCurrentAdmin(): Promise<SessionPayload | null> {
   const session = await getCurrentSession();
-  return session?.role === "admin" ? session : null;
+  if (session?.role !== "admin") return null;
+
+  // Validate every privileged request against the admin record so a disabled
+  // account or a password update invalidates previously issued sessions.
+  try {
+    const { getDatabase } = await import("@/db");
+    const db = await getDatabase();
+    const result = await db.execute({
+      sql: "SELECT is_active, updated_at FROM admins WHERE LOWER(email) = LOWER(?) LIMIT 1",
+      args: [session.email],
+    });
+    const admin = result.rows[0] as unknown as { is_active: number; updated_at: string } | undefined;
+    if (!admin || !admin.is_active || new Date(admin.updated_at).getTime() > session.issuedAt) return null;
+    return session;
+  } catch {
+    // Fail closed: a database outage must not turn an old signed cookie into
+    // administrator access.
+    return null;
+  }
 }
 
 export function setSession(response: NextResponse, email: string, role: SessionRole) {
   const payload: SessionPayload = {
     email: email.trim().toLowerCase(),
     role,
+    issuedAt: Date.now(),
     expiresAt: Date.now() + SESSION_MAX_AGE * 1000,
   };
   const encodedPayload = encodePayload(payload);
   response.cookies.set(SESSION_COOKIE, `${encodedPayload}.${sign(encodedPayload)}`, {
     httpOnly: true,
     sameSite: "lax",
-    secure: process.env.NODE_ENV === "production",
+    secure: useSecureSessionCookie(),
     maxAge: SESSION_MAX_AGE,
     path: "/",
   });
 }
 
 export function clearSession(response: NextResponse) {
-  response.cookies.set(SESSION_COOKIE, "", { httpOnly: true, sameSite: "lax", maxAge: 0, path: "/" });
+  response.cookies.set(SESSION_COOKIE, "", {
+    httpOnly: true,
+    sameSite: "lax",
+    secure: useSecureSessionCookie(),
+    maxAge: 0,
+    path: "/",
+  });
 }
 
 export function hashPassword(password: string): { hash: string; salt: string } {

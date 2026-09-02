@@ -42,7 +42,7 @@ export async function POST(request: NextRequest) {
 
     if (order.status !== "APPROVED") {
       return NextResponse.json(
-        { error: "Pesanan belum disetujui admin. Silakan upload bukti pembayaran dan tunggu persetujuan." },
+        { error: "Pesanan belum disetujui admin. Kirim bukti pembayaran melalui WhatsApp dan tunggu persetujuan." },
         { status: 400 },
       );
     }

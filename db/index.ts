@@ -684,6 +684,8 @@ export interface AtomicApprovalParams {
   transactionId?: string;
   token?: string;
   notes?: string;
+  /** True when the local payment flow grants credits immediately after proof upload. */
+  automated?: boolean;
 }
 
 export interface AtomicApprovalResult {
@@ -875,13 +877,18 @@ export async function executeAtomicPaymentApproval(
     const updateOrderRes = await tx.execute({
       sql: `UPDATE orders
         SET status = 'PAID',
-            ai_status = 'approved_by_admin',
+            ai_status = ?,
             paid_at = ?,
             approval_token = NULL,
             approval_token_hash = NULL,
             ai_analysis = ?
         WHERE id = ? AND status = 'PENDING_REVIEW'`,
-      args: [now, notes || `Diverifikasi & Disetujui oleh ${actorEmail}`, order.id],
+      args: [
+        params.automated ? "automatic_payment" : "approved_by_admin",
+        now,
+        notes || `Diverifikasi & Disetujui oleh ${actorEmail}`,
+        order.id,
+      ],
     });
 
     if (updateOrderRes.rowsAffected !== 1) {
@@ -926,7 +933,7 @@ export async function executeAtomicPaymentApproval(
         args: [
           order.user_email,
           creditIncrement,
-          `Pembelian ${order.plan_name} (${order.id}) • Diverifikasi oleh ${actorEmail}`,
+          `Pembelian ${order.plan_name} (${order.id}) • ${params.automated ? "Kredit otomatis setelah bukti diunggah" : `Diverifikasi oleh ${actorEmail}`}`,
           order.id,
           now,
         ],
@@ -950,7 +957,7 @@ export async function executeAtomicPaymentApproval(
       creditsGranted: creditIncrement,
       statusBefore: "PENDING_REVIEW",
       statusAfter: "PAID",
-      notes: notes || `Approval konfirmasi mutasi riil oleh ${actorEmail}`,
+      notes: notes || (params.automated ? "Kredit otomatis setelah bukti pembayaran diunggah." : `Approval konfirmasi mutasi riil oleh ${actorEmail}`),
       createdAt: now,
     });
 

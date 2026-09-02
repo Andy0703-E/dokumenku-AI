@@ -33,6 +33,7 @@ import {
   RefreshCw,
   Copy,
   CheckCircle2,
+  Trash2,
 } from "lucide-react";
 import { toast } from "sonner";
 
@@ -95,7 +96,7 @@ type Overview = {
     credits: number;
     paymentMethod: string;
     status: string;
-    proofImage?: string;
+    hasProof?: boolean;
     aiStatus?: string;
     aiAnalysis?: string;
     ocrMerchant?: string;
@@ -112,6 +113,8 @@ type Overview = {
 export default function AdminDashboard() {
   const [data, setData] = useState<Overview | null>(null);
   const [isLoading, setIsLoading] = useState(true);
+  const [isAdminAuthenticated, setIsAdminAuthenticated] = useState<boolean | null>(null);
+  const [overviewError, setOverviewError] = useState<string | null>(null);
 
   // Top up form
   const [email, setEmail] = useState("");
@@ -119,6 +122,7 @@ export default function AdminDashboard() {
   const [reason, setReason] = useState("");
   const [isSaving, setIsSaving] = useState(false);
   const [processingOrderId, setProcessingOrderId] = useState<string | null>(null);
+  const [deletingTarget, setDeletingTarget] = useState<string | null>(null);
   const [inspectProofImage, setInspectProofImage] = useState<{
     url: string;
     orderId: string;
@@ -186,15 +190,6 @@ export default function AdminDashboard() {
     }
   }
 
-  useEffect(() => {
-    if (!data) return;
-    void checkWaStatus();
-    const interval = setInterval(() => {
-      void checkWaStatus();
-    }, 3000);
-    return () => clearInterval(interval);
-  }, [data, showWaModal]);
-
   async function handleTestWa() {
     setIsTestingWa(true);
     try {
@@ -217,56 +212,11 @@ export default function AdminDashboard() {
 
   const [isDisconnectingWa, setIsDisconnectingWa] = useState(false);
 
-  // ── Chat State ─────────────────────────────────────────────────
-  const [chatMessages, setChatMessages] = useState<Array<{
-    id: number;
-    userEmail: string;
-    userName: string;
-    message: string;
-    adminReply: string | null;
-    createdAt: string;
-  }>>([]);
-  const [chatReplyText, setChatReplyText] = useState<Record<number, string>>({});
-  const [isReplying, setIsReplying] = useState<number | null>(null);
-  const [isLoadingChat, setIsLoadingChat] = useState(false);
-
   // ── Pagination State ────────────────────────────────────────────
   const PAGE_SIZE = 10;
   const [usersPage, setUsersPage] = useState(1);
   const [ordersPage, setOrdersPage] = useState(1);
   const [auditPage, setAuditPage] = useState(1);
-  const [chatPage, setChatPage] = useState(1);
-
-  async function loadChatMessages() {
-    setIsLoadingChat(true);
-    try {
-      const res = await fetch("/api/admin/chat");
-      const payload = (await res.json()) as { ok?: boolean; messages?: typeof chatMessages };
-      if (payload.ok && payload.messages) setChatMessages(payload.messages);
-    } catch { /* ignore */ }
-    setIsLoadingChat(false);
-  }
-
-  async function handleChatReply(chatId: number) {
-    const reply = chatReplyText[chatId]?.trim();
-    if (!reply) return;
-    setIsReplying(chatId);
-    try {
-      const res = await fetch("/api/admin/chat", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ chatId, reply }),
-      });
-      const payload = (await res.json()) as { ok?: boolean; error?: string };
-      if (!res.ok || !payload.ok) throw new Error(payload.error || "Gagal mengirim balasan.");
-      toast.success(`Balasan ke chat #${chatId} terkirim!`);
-      setChatReplyText((prev) => ({ ...prev, [chatId]: "" }));
-      loadChatMessages();
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Gagal mengirim balasan.");
-    }
-    setIsReplying(null);
-  }
 
   async function handleDisconnectWa() {
     if (!window.confirm("Yakin ingin memutus sesi bot WhatsApp ini? Anda harus scan QR code ulang setelah ini.")) {
@@ -314,6 +264,7 @@ export default function AdminDashboard() {
       }
       toast.success("Berhasil masuk ke Panel Admin.");
       setAdminPassword("");
+      setIsAdminAuthenticated(true);
       await loadOverview();
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Gagal masuk admin.");
@@ -353,31 +304,107 @@ export default function AdminDashboard() {
     }
   }
 
+  async function handleDeleteUser(userEmail: string) {
+    const confirmed = window.confirm(
+      `Hapus pengguna ${userEmail}? Seluruh data akun, dokumen, invoice, dan saldo pengguna akan dihapus. Tindakan ini tidak dapat dibatalkan.`,
+    );
+    if (!confirmed) return;
+
+    setDeletingTarget(`user:${userEmail}`);
+    try {
+      const res = await fetch(`/api/admin/users/${encodeURIComponent(userEmail)}`, { method: "DELETE" });
+      const payload = (await res.json().catch(() => ({}))) as { ok?: boolean; error?: string; message?: string; data?: { message?: string } };
+      if (!res.ok || !payload.ok) {
+        throw new Error(payload.error || "Gagal menghapus pengguna.");
+      }
+      toast.success(payload.message || payload.data?.message || "Pengguna berhasil dihapus.");
+      await loadOverview();
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Gagal menghapus pengguna.");
+    } finally {
+      setDeletingTarget(null);
+    }
+  }
+
+  async function handleDeleteOrder(orderId: string) {
+    const confirmed = window.confirm(
+      `Hapus invoice ${orderId}? Invoice yang sudah membagikan kredit tidak dapat dihapus agar saldo pengguna tetap aman.`,
+    );
+    if (!confirmed) return;
+
+    setDeletingTarget(`order:${orderId}`);
+    try {
+      const res = await fetch("/api/admin/orders", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ orderId, action: "delete" }),
+      });
+      const payload = (await res.json().catch(() => ({}))) as { ok?: boolean; error?: string; message?: string; data?: { message?: string } };
+      if (!res.ok || !payload.ok) {
+        throw new Error(payload.error || "Gagal menghapus invoice.");
+      }
+      toast.success(payload.message || payload.data?.message || "Invoice berhasil dihapus.");
+      await loadOverview();
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Gagal menghapus invoice.");
+    } finally {
+      setDeletingTarget(null);
+    }
+  }
+
   async function loadOverview() {
     setIsLoading(true);
     try {
-      const response = await fetch("/api/admin/overview");
-      const payload = (await response.json()) as Overview & { error?: string };
-      if (!response.ok) {
+      const response = await fetch("/api/admin/overview", { cache: "no-store" });
+      const payload = (await response.json().catch(() => ({}))) as Overview & { error?: string };
+      if (response.status === 401 || response.status === 403) {
         setData(null);
+        setIsAdminAuthenticated(false);
+        setOverviewError(null);
+      } else if (!response.ok) {
+        // A data/provider problem must not be rendered as an admin logout.
+        setOverviewError(payload.error || "Data dashboard belum dapat dimuat. Coba muat ulang beberapa saat lagi.");
       } else {
         setData(payload);
+        setIsAdminAuthenticated(true);
+        setOverviewError(null);
       }
     } catch {
-      setData(null);
+      setOverviewError("Koneksi ke dashboard admin sedang terganggu. Sesi Anda tetap tersimpan.");
     } finally {
       setIsLoading(false);
     }
   }
 
+  async function initializeAdmin() {
+    setIsLoading(true);
+    try {
+      const response = await fetch("/api/session", { cache: "no-store" });
+      const session = (await response.json().catch(() => ({}))) as { authenticated?: boolean; role?: string };
+      const isAdmin = response.ok && session.authenticated === true && session.role === "admin";
+      setIsAdminAuthenticated(isAdmin);
+
+      if (isAdmin) {
+        await loadOverview();
+      } else {
+        setData(null);
+        setIsLoading(false);
+      }
+    } catch {
+      setIsAdminAuthenticated(false);
+      setIsLoading(false);
+    }
+  }
+
   useEffect(() => {
-    void loadOverview();
-    void loadChatMessages();
+    void initializeAdmin();
   }, []);
 
   async function handleAdminLogout() {
     await fetch("/api/admin/logout", { method: "POST" });
     setData(null);
+    setOverviewError(null);
+    setIsAdminAuthenticated(false);
     toast.success("Sesi admin telah ditutup.");
   }
 
@@ -448,9 +475,6 @@ export default function AdminDashboard() {
   const txTotalPages = Math.max(1, Math.ceil(filteredTransactions.length / PAGE_SIZE));
   const paginatedTx = filteredTransactions.slice((auditPage - 1) * PAGE_SIZE, auditPage * PAGE_SIZE);
 
-  const chatTotalPages = Math.max(1, Math.ceil(chatMessages.length / PAGE_SIZE));
-  const paginatedChat = chatMessages.slice((chatPage - 1) * PAGE_SIZE, chatPage * PAGE_SIZE);
-
   return (
     <main className="admin-shell">
       {/* ── Top Header Bar ─────────────────────────────────────── */}
@@ -469,7 +493,7 @@ export default function AdminDashboard() {
         </div>
 
         <div className="admin-header-actions">
-          {data && (
+          {isAdminAuthenticated && (
             <>
               <a
                 href="/studio"
@@ -499,7 +523,7 @@ export default function AdminDashboard() {
       </header>
 
       {/* ── Conditional Render: Unauthenticated vs Dashboard ──── */}
-      {data ? (
+      {isAdminAuthenticated ? (data ? (
         /* ══════════════════════════════════════════════════════════
            AUTHENTICATED DASHBOARD (admin-dashboard.png)
            ══════════════════════════════════════════════════════════ */
@@ -569,104 +593,6 @@ export default function AdminDashboard() {
                 </span>
               </div>
             </article>
-          </section>
-
-          {/* ── WhatsApp Bot Integration Status Banner ───────────────── */}
-          <section
-            style={{
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "space-between",
-              flexWrap: "wrap",
-              gap: "16px",
-              padding: "16px 20px",
-              borderRadius: "14px",
-              background: waStatus?.ready
-                ? "linear-gradient(135deg, #F0FDF4 0%, #DCFCE7 100%)"
-                : waStatus?.qrCode
-                  ? "linear-gradient(135deg, #FFFBEB 0%, #FEF3C7 100%)"
-                  : "linear-gradient(135deg, #F8FAFC 0%, #F1F5F9 100%)",
-              border: `1.5px solid ${
-                waStatus?.ready ? "#86EFAC" : waStatus?.qrCode ? "#FCD34D" : "#E2E8F0"
-              }`,
-              boxShadow: "0 4px 12px rgba(15, 23, 42, 0.03)",
-            }}
-          >
-            <div style={{ display: "flex", alignItems: "center", gap: "14px" }}>
-              <div
-                style={{
-                  width: "44px",
-                  height: "44px",
-                  borderRadius: "12px",
-                  background: waStatus?.ready ? "#10B981" : waStatus?.qrCode ? "#F59E0B" : "#64748B",
-                  color: "#FFFFFF",
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "center",
-                  boxShadow: "0 2px 8px rgba(0,0,0,0.08)",
-                }}
-              >
-                <Smartphone size={22} />
-              </div>
-              <div>
-                <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
-                  <strong style={{ fontSize: "0.96rem", color: "var(--navy)" }}>
-                    Integrasi WhatsApp Web Bot (+62 857-5449-4990)
-                  </strong>
-                  <span
-                    style={{
-                      fontSize: "0.72rem",
-                      fontWeight: 700,
-                      padding: "2px 8px",
-                      borderRadius: "6px",
-                      background: waStatus?.ready ? "#D1FAE5" : waStatus?.qrCode ? "#FEF3C7" : "#E2E8F0",
-                      color: waStatus?.ready ? "#065F46" : waStatus?.qrCode ? "#92400E" : "#475569",
-                    }}
-                  >
-                    {waStatus?.ready
-                      ? "🟢 TERKONEKSI & AKTIF"
-                      : waStatus?.qrCode
-                        ? "🟡 PERLU SCAN QR CODE"
-                        : "⚪ SERVER BOT OFFLINE"}
-                  </span>
-                </div>
-                <p style={{ margin: "3px 0 0", fontSize: "0.82rem", color: "var(--text-muted)" }}>
-                  {waStatus?.ready
-                    ? "Bot siap mengirim notifikasi struk QRIS baru dan menerima perintah approval 'ACC <ID>' langsung dari WhatsApp Anda."
-                    : waStatus?.qrCode
-                      ? "QR Code otentikasi WhatsApp siap dipindai langsung dari browser ini. Klik tombol di kanan untuk memindai."
-                      : "Server dispatcher bot WhatsApp belum berjalan. Jalankan 'npm run bot:wa' di terminal server."}
-                </p>
-              </div>
-            </div>
-
-            <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
-              {waStatus?.ready && (
-                <button
-                  type="button"
-                  className="btn-secondary"
-                  onClick={handleTestWa}
-                  disabled={isTestingWa}
-                  style={{ minHeight: "36px", fontSize: "0.8rem", background: "#FFFFFF" }}
-                >
-                  {isTestingWa ? <Loader2 size={14} className="animate-spin" /> : <Send size={14} />}
-                  <span>Tes Notifikasi WA</span>
-                </button>
-              )}
-              <button
-                type="button"
-                className="btn-primary"
-                onClick={() => setShowWaModal(true)}
-                style={{
-                  minHeight: "36px",
-                  fontSize: "0.82rem",
-                  background: waStatus?.ready ? "#059669" : undefined,
-                }}
-              >
-                <QrCode size={14} />
-                <span>{waStatus?.qrCode ? "Pindai QR Code" : "Konfigurasi Bot WA"}</span>
-              </button>
-            </div>
           </section>
 
           {/* AI Provider & API Key Infrastructure Inspector Card */}
@@ -991,6 +917,7 @@ export default function AdminDashboard() {
                           <th>Email Pengguna</th>
                           <th>Saldo Kredit</th>
                           <th>Terakhir Diperbarui</th>
+                          <th style={{ textAlign: "right" }}>Aksi</th>
                         </tr>
                       </thead>
                       <tbody>
@@ -1019,6 +946,19 @@ export default function AdminDashboard() {
                                 day: "numeric",
                               })}
                             </td>
+                            <td style={{ textAlign: "right" }}>
+                              <button
+                                type="button"
+                                className="btn-secondary"
+                                onClick={() => void handleDeleteUser(user.email)}
+                                disabled={deletingTarget === `user:${user.email}`}
+                                title={`Hapus pengguna ${user.email}`}
+                                style={{ minHeight: "28px", padding: "0 9px", fontSize: "0.72rem", color: "#B91C1C", borderColor: "#FECACA" }}
+                              >
+                                {deletingTarget === `user:${user.email}` ? <Loader2 size={13} className="animate-spin" /> : <Trash2 size={13} />}
+                                Hapus
+                              </button>
+                            </td>
                           </tr>
                         ))}
                       </tbody>
@@ -1028,13 +968,6 @@ export default function AdminDashboard() {
                         <button type="button" onClick={() => setUsersPage((p) => Math.max(1, p - 1))} disabled={usersPage === 1} style={{ padding: "4px 10px", border: "1px solid var(--border)", borderRadius: "6px", background: usersPage === 1 ? "#F3F4F6" : "#fff", cursor: usersPage === 1 ? "not-allowed" : "pointer", fontSize: "0.75rem" }}>Prev</button>
                         <span style={{ fontSize: "0.75rem", color: "var(--text-muted)" }}>{usersPage}/{usersTotalPages}</span>
                         <button type="button" onClick={() => setUsersPage((p) => Math.min(usersTotalPages, p + 1))} disabled={usersPage === usersTotalPages} style={{ padding: "4px 10px", border: "1px solid var(--border)", borderRadius: "6px", background: usersPage === usersTotalPages ? "#F3F4F6" : "#fff", cursor: usersPage === usersTotalPages ? "not-allowed" : "pointer", fontSize: "0.75rem" }}>Next</button>
-                </div>
-              )}
-              {chatTotalPages > 1 && (
-                <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: "6px", marginTop: "12px" }}>
-                  <button type="button" onClick={() => setChatPage((p) => Math.max(1, p - 1))} disabled={chatPage === 1} style={{ padding: "4px 10px", border: "1px solid var(--border)", borderRadius: "6px", background: chatPage === 1 ? "#F3F4F6" : "#fff", cursor: chatPage === 1 ? "not-allowed" : "pointer", fontSize: "0.75rem" }}>Prev</button>
-                  <span style={{ fontSize: "0.75rem", color: "var(--text-muted)" }}>{chatPage}/{chatTotalPages}</span>
-                  <button type="button" onClick={() => setChatPage((p) => Math.min(chatTotalPages, p + 1))} disabled={chatPage === chatTotalPages} style={{ padding: "4px 10px", border: "1px solid var(--border)", borderRadius: "6px", background: chatPage === chatTotalPages ? "#F3F4F6" : "#fff", cursor: chatPage === chatTotalPages ? "not-allowed" : "pointer", fontSize: "0.75rem" }}>Next</button>
                 </div>
               )}
               </>
@@ -1060,7 +993,7 @@ export default function AdminDashboard() {
                   Daftar Tagihan & Pembayaran Paket (Invoices)
                 </h2>
                 <span className="admin-card-sub" style={{ margin: 0 }}>
-                  Verifikasi dan setujui pesanan top-up Pro Studio dari pengguna.
+                  Riwayat pembelian kredit. Setujui pembayaran setelah memeriksa bukti yang dikirim pengguna melalui WhatsApp.
                 </span>
               </div>
 
@@ -1095,7 +1028,7 @@ export default function AdminDashboard() {
                         <th>Paket & Kredit</th>
                         <th>Nominal</th>
                         <th>Bukti Transfer</th>
-                        <th>Hasil Audit AI</th>
+                        <th>Proses Kredit</th>
                         <th>Status Tagihan</th>
                         <th>Waktu Pesan</th>
                         <th style={{ textAlign: "right" }}>Aksi Admin</th>
@@ -1121,12 +1054,12 @@ export default function AdminDashboard() {
                           </strong>
                         </td>
                         <td>
-                          {ord.proofImage ? (
+                          {ord.hasProof ? (
                             <button
                               type="button"
                               onClick={() =>
                                 setInspectProofImage({
-                                  url: ord.proofImage!,
+                                  url: `/api/admin/orders/${encodeURIComponent(ord.id)}/proof`,
                                   orderId: ord.id,
                                   analysis: ord.aiAnalysis,
                                   userEmail: ord.userEmail,
@@ -1149,24 +1082,34 @@ export default function AdminDashboard() {
                                 cursor: "pointer",
                               }}
                             >
-                              {/* eslint-disable-next-line @next/next/no-img-element */}
-                              <img
-                                src={ord.proofImage}
-                                alt="Struk"
-                                style={{ width: "24px", height: "24px", objectFit: "cover", borderRadius: "4px" }}
-                              />
                               <span style={{ fontSize: "0.74rem", fontWeight: 700, color: "var(--cobalt)" }}>
-                                Lihat Bukti & OCR
+                                Lihat Bukti
                               </span>
                             </button>
                           ) : (
                             <span style={{ fontSize: "0.74rem", color: "var(--text-muted)" }}>
-                              Belum diupload
+                              {ord.status === "PENDING_REVIEW" ? "Bukti via WhatsApp" : "Belum dikirim"}
                             </span>
                           )}
                         </td>
                         <td>
-                          {ord.aiStatus === "pending_review" ? (
+                          {ord.status === "PAID" || ord.status === "paid" ? (
+                            <span
+                              style={{
+                                display: "inline-flex",
+                                padding: "2px 8px",
+                                borderRadius: "6px",
+                                fontSize: "0.7rem",
+                                fontWeight: 800,
+                                background: "#ECFDF5",
+                                color: "#065F46",
+                                border: "1px solid #A7F3D0",
+                              }}
+                              title={ord.aiAnalysis}
+                            >
+                              ✓ Kredit sudah ditambahkan
+                            </span>
+                          ) : ord.aiStatus === "payment_pending_admin" || ord.aiStatus === "pending_review" || ord.status === "PENDING_REVIEW" ? (
                             <span
                               style={{
                                 display: "inline-flex",
@@ -1197,22 +1140,6 @@ export default function AdminDashboard() {
                               title={ord.aiAnalysis}
                             >
                               ⚠️ Data Struk Tidak Cocok
-                            </span>
-                          ) : ord.status === "paid" ? (
-                            <span
-                              style={{
-                                display: "inline-flex",
-                                padding: "2px 8px",
-                                borderRadius: "6px",
-                                fontSize: "0.7rem",
-                                fontWeight: 800,
-                                background: "#ECFDF5",
-                                color: "#065F46",
-                                border: "1px solid #A7F3D0",
-                              }}
-                              title={ord.aiAnalysis}
-                            >
-                              ✓ Diverifikasi Admin
                             </span>
                           ) : (
                             <span style={{ fontSize: "0.74rem", color: "var(--text-muted)" }}>—</span>
@@ -1268,7 +1195,7 @@ export default function AdminDashboard() {
                                   : ord.status === "PENDING_REVIEW"
                                     ? "⏳ MENUNGGU REVIEW"
                                     : ord.status === "PROOF_UPLOADED"
-                                      ? "📷 BUKTI DIUNGGAH"
+                                      ? "📷 BUKTI MASUK"
                                       : "⏳ MENUNGGU BAYAR"}
                           </span>
                         </td>
@@ -1295,7 +1222,7 @@ export default function AdminDashboard() {
                                   <Loader2 className="animate-spin" size={12} />
                                 ) : (
                                   <>
-                                    <Check size={12} /> ACC (+100)
+                                    <Check size={12} /> ACC (+{ord.credits})
                                   </>
                                 )}
                               </button>
@@ -1314,9 +1241,30 @@ export default function AdminDashboard() {
                               >
                                 <X size={12} />
                               </button>
+                              <button
+                                type="button"
+                                className="btn-secondary"
+                                style={{ minHeight: "28px", padding: "0 8px", fontSize: "0.72rem", color: "#B91C1C", borderColor: "#FECACA" }}
+                                onClick={() => void handleDeleteOrder(ord.id)}
+                                disabled={deletingTarget === `order:${ord.id}` || processingOrderId === ord.id}
+                                title={`Hapus invoice ${ord.id}`}
+                              >
+                                {deletingTarget === `order:${ord.id}` ? <Loader2 className="animate-spin" size={12} /> : <Trash2 size={12} />}
+                              </button>
                             </div>
-                          ) : (
+                          ) : ord.status === "PAID" || ord.status === "paid" ? (
                             <span style={{ fontSize: "0.74rem", color: "var(--text-muted)" }}>Selesai</span>
+                          ) : (
+                            <button
+                              type="button"
+                              className="btn-secondary"
+                              style={{ minHeight: "28px", padding: "0 9px", fontSize: "0.72rem", color: "#B91C1C", borderColor: "#FECACA" }}
+                              onClick={() => void handleDeleteOrder(ord.id)}
+                              disabled={deletingTarget === `order:${ord.id}`}
+                            >
+                              {deletingTarget === `order:${ord.id}` ? <Loader2 className="animate-spin" size={12} /> : <Trash2 size={12} />}
+                              Hapus
+                            </button>
                           )}
                         </td>
                       </tr>
@@ -1442,108 +1390,31 @@ export default function AdminDashboard() {
             </div>
           </section>
 
-          {/* Chat Management Section */}
-          <section className="admin-card-surface" aria-labelledby="chat-heading">
-            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "16px", flexWrap: "wrap", gap: "8px" }}>
-              <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
-                <MessageSquare size={20} color="var(--cobalt)" />
-                <h2 id="chat-heading" style={{ margin: 0, fontSize: "1.15rem", fontWeight: 800, color: "var(--navy)" }}>
-                  Chat User
-                </h2>
-                <span style={{ fontSize: "0.75rem", color: "var(--text-muted)", background: "var(--bg-soft)", padding: "2px 8px", borderRadius: "8px" }}>
-                  {chatMessages.filter((m) => !m.adminReply).length} belum dibalas
-                </span>
-              </div>
-              <button
-                type="button"
-                onClick={loadChatMessages}
-                className="btn-secondary"
-                style={{ minHeight: "32px", padding: "0 12px", fontSize: "0.78rem" }}
-                disabled={isLoadingChat}
-              >
-                <RefreshCw size={13} className={isLoadingChat ? "animate-spin" : ""} /> Muat Ulang
-              </button>
-            </div>
-
-            {chatMessages.length > 0 ? (
-              <>
-              <div style={{ display: "flex", flexDirection: "column", gap: "10px" }}>
-                {paginatedChat.map((chat) => (
-                  <div
-                    key={chat.id}
-                    style={{
-                      padding: "14px 16px",
-                      borderRadius: "10px",
-                      border: chat.adminReply ? "1px solid #D1FAE5" : "1px solid #E5E7EB",
-                      background: chat.adminReply ? "#F0FDF4" : "#FFFFFF",
-                    }}
-                  >
-                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "6px" }}>
-                      <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
-                        <span style={{ fontWeight: 700, fontSize: "0.85rem", color: "var(--navy)" }}>
-                          #{chat.id} — {chat.userName}
-                        </span>
-                        <span style={{ fontSize: "0.72rem", color: "var(--text-muted)" }}>
-                          {chat.userEmail}
-                        </span>
-                      </div>
-                      <span style={{ fontSize: "0.7rem", color: "var(--text-muted)" }}>
-                        {new Date(chat.createdAt).toLocaleString("id-ID", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" })}
-                      </span>
-                    </div>
-                    <p style={{ margin: "0 0 8px", fontSize: "0.84rem", color: "#374151", lineHeight: "1.5" }}>
-                      {chat.message}
-                    </p>
-                    {chat.adminReply ? (
-                      <div style={{ padding: "8px 12px", borderRadius: "8px", background: "#ECFDF5", border: "1px solid #A7F3D0" }}>
-                        <span style={{ fontSize: "0.72rem", fontWeight: 700, color: "#059669" }}>Balasan Admin:</span>
-                        <p style={{ margin: "2px 0 0", fontSize: "0.82rem", color: "#065F46" }}>{chat.adminReply}</p>
-                      </div>
-                    ) : (
-                      <div style={{ display: "flex", gap: "6px", alignItems: "flex-end" }}>
-                        <textarea
-                          value={chatReplyText[chat.id] || ""}
-                          onChange={(e) => setChatReplyText((prev) => ({ ...prev, [chat.id]: e.target.value }))}
-                          placeholder={`Balas #${chat.id}...`}
-                          rows={2}
-                          style={{
-                            flex: 1,
-                            padding: "8px 10px",
-                            border: "1px solid #D1D5DB",
-                            borderRadius: "8px",
-                            fontSize: "0.82rem",
-                            outline: "none",
-                            resize: "none",
-                          }}
-                        />
-                        <button
-                          type="button"
-                          onClick={() => handleChatReply(chat.id)}
-                          disabled={isReplying === chat.id || !chatReplyText[chat.id]?.trim()}
-                          className="btn-primary"
-                          style={{ minHeight: "36px", padding: "0 12px", fontSize: "0.78rem" }}
-                        >
-                          {isReplying === chat.id ? <Loader2 size={14} className="animate-spin" /> : <Send size={14} />}
-                        </button>
-                      </div>
-                    )}
-                  </div>
-                ))}
-              </div>
-              </>
-            ) : (
-              <div className="admin-empty-table-state">
-                <div className="admin-empty-icon">
-                  <MessageSquare size={24} />
-                </div>
-                <span style={{ fontSize: "0.88rem", fontWeight: 700, color: "var(--navy)" }}>
-                  Belum ada pesan chat.
-                </span>
-              </div>
-            )}
-          </section>
         </div>
       ) : (
+        <div className="admin-login-center-wrap">
+          <div className="admin-login-card" style={{ maxWidth: "480px", padding: "32px 28px", textAlign: "center" }}>
+            {isLoading ? (
+              <>
+                <Loader2 size={30} className="animate-spin" style={{ color: "var(--cobalt)", marginBottom: "14px" }} />
+                <h2 style={{ margin: "0 0 8px", fontSize: "1.2rem", color: "var(--navy)" }}>Memuat Panel Admin</h2>
+                <p style={{ margin: 0, color: "var(--text-muted)", fontSize: "0.86rem" }}>Memeriksa sesi dan menyiapkan data dashboard.</p>
+              </>
+            ) : (
+              <>
+                <Info size={30} style={{ color: "#D97706", marginBottom: "14px" }} />
+                <h2 style={{ margin: "0 0 8px", fontSize: "1.2rem", color: "var(--navy)" }}>Sesi Admin Tetap Aktif</h2>
+                <p style={{ margin: "0 0 18px", color: "var(--text-muted)", fontSize: "0.86rem", lineHeight: "1.5" }}>
+                  {overviewError || "Data dashboard belum tersedia. Silakan muat ulang."}
+                </p>
+                <button type="button" className="btn-primary" onClick={() => void loadOverview()}>
+                  <RefreshCw size={15} /> Coba Muat Ulang
+                </button>
+              </>
+            )}
+          </div>
+        </div>
+      )) : (
         /* ══════════════════════════════════════════════════════════
            UNAUTHENTICATED ADMIN SCREEN (Direct Admin Login Gate)
            ══════════════════════════════════════════════════════════ */
@@ -1833,7 +1704,7 @@ export default function AdminDashboard() {
             <div className="studio-modal-header">
               <div>
                 <strong id="proof-modal-title" style={{ fontSize: "1.08rem", color: "var(--navy)", display: "block" }}>
-                  Pemeriksaan Bukti Pembayaran: {inspectProofImage.orderId}
+                  Bukti Pembayaran: {inspectProofImage.orderId}
                 </strong>
                 <span style={{ fontSize: "0.74rem", color: "var(--text-muted)" }}>
                   Pengguna: {inspectProofImage.userEmail}
@@ -1874,7 +1745,7 @@ export default function AdminDashboard() {
                   />
                 </div>
 
-                {/* OCR Extracted Metadata Details */}
+                {/* Informasi bukti. Pembayaran otomatis tidak memakai OCR. */}
                 <div style={{ display: "flex", flexDirection: "column", gap: "10px" }}>
                   <div
                     style={{
@@ -1885,23 +1756,20 @@ export default function AdminDashboard() {
                     }}
                   >
                     <strong style={{ fontSize: "0.82rem", color: "var(--navy)", display: "block", marginBottom: "8px" }}>
-                      📋 Data Hasil Ekstraksi OCR:
+                      📋 Informasi Pembayaran:
                     </strong>
                     <div style={{ display: "grid", gridTemplateColumns: "110px 1fr", gap: "6px", fontSize: "0.76rem" }}>
-                      <span style={{ color: "var(--text-muted)" }}>Merchant:</span>
-                      <strong style={{ color: "var(--navy)" }}>{inspectProofImage.ocrMerchant || "—"}</strong>
+                      <span style={{ color: "var(--text-muted)" }}>Metode:</span>
+                      <strong style={{ color: "var(--navy)" }}>QRIS</strong>
 
-                      <span style={{ color: "var(--text-muted)" }}>NMID:</span>
-                      <code>{inspectProofImage.ocrNmid || "—"}</code>
+                      <span style={{ color: "var(--text-muted)" }}>Proses:</span>
+                      <strong style={{ color: "#92400E" }}>Menunggu persetujuan admin</strong>
 
-                      <span style={{ color: "var(--text-muted)" }}>Nominal Struk:</span>
-                      <strong style={{ color: "var(--cobalt)" }}>{inspectProofImage.ocrAmount || "—"}</strong>
+                      <span style={{ color: "var(--text-muted)" }}>Status:</span>
+                      <strong style={{ color: "#065F46" }}>{inspectProofImage.status === "PAID" ? "LUNAS" : inspectProofImage.status || "—"}</strong>
 
-                      <span style={{ color: "var(--text-muted)" }}>ID Transaksi:</span>
-                      <code style={{ wordBreak: "break-all" }}>{inspectProofImage.ocrTransactionId || "—"}</code>
-
-                      <span style={{ color: "var(--text-muted)" }}>Waktu/Tanggal:</span>
-                      <span>{inspectProofImage.ocrDate || "—"}</span>
+                      <span style={{ color: "var(--text-muted)" }}>OCR:</span>
+                      <span>Tidak digunakan</span>
                     </div>
                   </div>
 
@@ -1941,9 +1809,11 @@ export default function AdminDashboard() {
                     type="button"
                     className="btn-secondary"
                     style={{ color: "#DC2626" }}
-                    onClick={async () => {
-                      await handleOrderAction(inspectProofImage.orderId, "cancel");
+                    onClick={() => {
+                      const order = data?.orders?.find((item) => item.id === inspectProofImage.orderId);
+                      if (!order) return;
                       setInspectProofImage(null);
+                      setRejectOrderModal({ order, reasonCode: "TRANSACTION_NOT_FOUND", reasonNote: "" });
                     }}
                   >
                     <X size={14} /> Tolak Tagihan
@@ -1951,12 +1821,14 @@ export default function AdminDashboard() {
                   <button
                     type="button"
                     className="btn-primary"
-                    onClick={async () => {
-                      await handleOrderAction(inspectProofImage.orderId, "approve");
+                    onClick={() => {
+                      const order = data?.orders?.find((item) => item.id === inspectProofImage.orderId);
+                      if (!order) return;
                       setInspectProofImage(null);
+                      setConfirmApproveOrder(order);
                     }}
                   >
-                    <Check size={14} /> Verifikasi Mutasi QRIS (+100 Kredit)
+                  <Check size={14} /> Verifikasi Mutasi QRIS
                   </button>
                 </>
               )}
@@ -2036,7 +1908,7 @@ export default function AdminDashboard() {
                       Nomor Admin Tujuan: <strong>+{waStatus.adminPhone}</strong>
                     </span>
                     <p style={{ margin: "4px 0 0", fontSize: "0.82rem", color: "#166534", lineHeight: "1.5" }}>
-                      Setiap ada unggahan bukti bayar QRIS, notifikasi foto struk, rincian OCR, dan token approval 6-karakter akan otomatis dikirim ke chat WhatsApp Anda.
+                      Bukti pembayaran dikirim sendiri oleh pengguna melalui WhatsApp. Periksa mutasi pembayaran secara manual sebelum menyetujui invoice ini.
                     </p>
                   </div>
 
@@ -2361,7 +2233,7 @@ export default function AdminDashboard() {
         </div>
       )}
 
-      {/* ── Modal 4: Konfirmasi Verifikasi Mutasi Pembayaran (+100 Kredit) ── */}
+      {/* ── Modal 4: Konfirmasi Verifikasi Mutasi Pembayaran ── */}
       {confirmApproveOrder && (
         <div className="studio-modal-backdrop" onClick={() => setConfirmApproveOrder(null)}>
           <div className="studio-modal-card" onClick={(e) => e.stopPropagation()} style={{ maxWidth: "520px" }}>
@@ -2390,7 +2262,7 @@ export default function AdminDashboard() {
                   fontSize: "0.82rem",
                 }}
               >
-                ⚠️ <strong>Peringatan Verifikasi:</strong> Pastikan Anda telah memeriksa mutasi pembayaran secara langsung pada m-Banking/QRIS Dashboard. Jangan menyetujui transaksi hanya berdasarkan gambar bukti struk yang diunggah pengguna.
+                ⚠️ <strong>Peringatan Verifikasi:</strong> Pastikan Anda telah memeriksa mutasi pembayaran secara langsung pada m-Banking/QRIS Dashboard. Jangan menyetujui transaksi hanya berdasarkan bukti yang dikirim pengguna melalui WhatsApp.
               </div>
 
               <div
@@ -2423,7 +2295,7 @@ export default function AdminDashboard() {
                 <span>{confirmApproveOrder.userEmail}</span>
 
                 <span style={{ color: "var(--text-muted)" }}>Kredit Diberikan:</span>
-                <span style={{ color: "#059669", fontWeight: 800 }}>+100 Kredit Pro Studio</span>
+                <span style={{ color: "#059669", fontWeight: 800 }}>+{confirmApproveOrder.credits} Kredit {confirmApproveOrder.planName}</span>
               </div>
             </div>
             <div className="studio-modal-footer">
@@ -2452,7 +2324,7 @@ export default function AdminDashboard() {
                   </>
                 ) : (
                   <>
-                    <Check size={14} /> Saya Sudah Cek Mutasi — ACC (+100 Kredit)
+                    <Check size={14} /> Saya Sudah Cek Mutasi — ACC (+{confirmApproveOrder.credits} Kredit)
                   </>
                 )}
               </button>

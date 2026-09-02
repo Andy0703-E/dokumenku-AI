@@ -20,16 +20,7 @@ import {
   QrCode,
   ShieldCheck,
   Copy,
-  CheckCheck,
-  Building2,
-  Clock,
-  ExternalLink,
   Download,
-  UploadCloud,
-  ImageIcon,
-  Bot,
-  AlertCircle,
-  Trash2,
 } from "lucide-react";
 import { toast } from "sonner";
 
@@ -121,9 +112,11 @@ const faqItems = [
   {
     icon: MessageCircle,
     q: "Bagaimana cara melakukan pembelian paket Pro?",
-    a: "Pilih paket, bayar melalui QRIS, lalu unggah bukti pembayaran pada invoice. Notifikasi akan dikirim ke WhatsApp admin untuk konfirmasi manual. Kredit ditambahkan setelah pembayaran dikonfirmasi.",
+    a: "Pilih paket, bayar melalui QRIS, lalu kirim bukti pembayaran langsung ke WhatsApp admin. Setelah itu, tandai invoice sudah dikirim. Kredit hanya ditambahkan setelah admin memeriksa dan menyetujui pembayaran.",
   },
 ];
+
+const WHATSAPP_NUMBER = "6285754494990";
 
 type OrderData = {
   id: string;
@@ -141,26 +134,15 @@ export default function PricingPage() {
   const [isAuthenticated, setIsAuthenticated] = useState<boolean | null>(null);
   const [showCheckoutModal, setShowCheckoutModal] = useState(false);
   const [isCreatingOrder, setIsCreatingOrder] = useState(false);
-  const [isVerifyingPayment, setIsVerifyingPayment] = useState(false);
   const [currentOrder, setCurrentOrder] = useState<OrderData | null>(null);
-  const [paymentMethodTab, setPaymentMethodTab] = useState<"qris" | "transfer">("qris");
   const [paymentSuccess, setPaymentSuccess] = useState(false);
   const [copiedField, setCopiedField] = useState<string | null>(null);
 
-  // AI Receipt Proof Upload State
-  const [proofImage, setProofImage] = useState<string | null>(null);
-  const [isAnalyzingProof, setIsAnalyzingProof] = useState(false);
-  const [aiErrorMsg, setAiErrorMsg] = useState<string | null>(null);
-  const [aiAnalysisNotes, setAiAnalysisNotes] = useState<string | null>(null);
-  const [isSubmittedForReview, setIsSubmittedForReview] = useState(false);
-  const [extractedOcr, setExtractedOcr] = useState<{
-    merchant_name?: string;
-    nmid?: string;
-    amount?: string;
-    transaction_id?: string;
-    transaction_date?: string;
-    payment_provider?: string;
-  } | null>(null);
+  // Pengguna mengirim foto bukti langsung ke WhatsApp admin. Sistem hanya
+  // mencatat bahwa invoice sudah siap diperiksa, tanpa bot atau OCR.
+  const [isSubmittingProof, setIsSubmittingProof] = useState(false);
+  const [paymentError, setPaymentError] = useState<string | null>(null);
+  const [paymentSubmitted, setPaymentSubmitted] = useState(false);
 
   useEffect(() => {
     fetch("/api/session")
@@ -194,12 +176,9 @@ export default function PricingPage() {
           throw new Error(payload.error || "Gagal membuat tagihan invoice.");
         }
         setCurrentOrder(payload.order);
-        setProofImage(null);
-        setAiErrorMsg(null);
-        setAiAnalysisNotes(null);
-        setIsSubmittedForReview(false);
-        setExtractedOcr(null);
+        setPaymentError(null);
         setPaymentSuccess(false);
+        setPaymentSubmitted(false);
         setShowCheckoutModal(true);
       } catch (err) {
         toast.error(err instanceof Error ? err.message : "Gagal memproses pesanan.");
@@ -211,41 +190,29 @@ export default function PricingPage() {
     }
   }
 
-  function handleFileSelect(e: React.ChangeEvent<HTMLInputElement>) {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    if (!file.type.startsWith("image/")) {
-      toast.error("File yang diunggah harus berupa gambar (JPG, PNG, WEBP).");
-      return;
-    }
-    if (file.size > 5 * 1024 * 1024) {
-      toast.error("Ukuran file bukti transfer maksimal 5 MB.");
-      return;
-    }
-    const reader = new FileReader();
-    reader.onload = () => {
-      setProofImage(reader.result as string);
-      setAiErrorMsg(null);
-      setAiAnalysisNotes(null);
-    };
-    reader.readAsDataURL(file);
+  function getWhatsAppProofUrl(order: OrderData) {
+    const message = [
+      "Halo Admin Dokumenku AI, saya sudah membayar QRIS.",
+      "",
+      `Invoice: ${order.id}`,
+      `Paket: ${order.planName}`,
+      `Nominal: Rp ${order.amount.toLocaleString("id-ID")}`,
+      "",
+      "Saya lampirkan bukti pembayaran di pesan ini.",
+    ].join("\n");
+    return `https://wa.me/${WHATSAPP_NUMBER}?text=${encodeURIComponent(message)}`;
   }
 
-  async function handleUploadAndVerifyWithAi() {
+  async function handleMarkProofSent() {
     if (!currentOrder) return;
-    if (!proofImage) {
-      toast.warning("Silakan pilih atau upload foto struk bukti transfer terlebih dahulu.");
-      return;
-    }
-    setIsAnalyzingProof(true);
-    setAiErrorMsg(null);
+    setIsSubmittingProof(true);
+    setPaymentError(null);
     try {
-      const res = await fetch("/api/checkout/upload-proof", {
+      const res = await fetch("/api/checkout/submit-whatsapp-proof", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           orderId: currentOrder.id,
-          proofImage,
         }),
       });
       const payload = (await res.json()) as {
@@ -254,31 +221,22 @@ export default function PricingPage() {
         data?: {
           isPendingReview?: boolean;
           message?: string;
-          extracted?: {
-            merchant_name?: string;
-            nmid?: string;
-            amount?: string;
-            transaction_id?: string;
-            transaction_date?: string;
-            payment_provider?: string;
-          };
         };
       };
       if (res.ok && payload.data?.isPendingReview) {
-        setExtractedOcr(payload.data.extracted || null);
-        setIsSubmittedForReview(true);
-        toast.success("Bukti transfer berhasil dikirim. Admin akan mengonfirmasi pembayaran melalui WhatsApp.");
+        setPaymentSubmitted(true);
+        toast.success(payload.data.message || "Invoice sedang menunggu persetujuan admin.");
       } else {
-        const errMsg = payload.error || "Bukti pembayaran belum dapat diunggah. Pastikan file gambar valid.";
-        setAiErrorMsg(errMsg);
-        toast.error(`Verifikasi Gagal: ${errMsg}`);
+        const errMsg = payload.error || "Invoice belum dapat dikirim ke antrean pemeriksaan admin.";
+        setPaymentError(errMsg);
+        toast.error(`Pembayaran belum diproses: ${errMsg}`);
       }
     } catch (err) {
-      const msg = err instanceof Error ? err.message : "Terjadi kesalahan saat memproses gambar.";
-      setAiErrorMsg(msg);
+      const msg = err instanceof Error ? err.message : "Terjadi kesalahan saat mengirim invoice ke antrean pemeriksaan.";
+      setPaymentError(msg);
       toast.error(msg);
     } finally {
-      setIsAnalyzingProof(false);
+      setIsSubmittingProof(false);
     }
   }
 
@@ -486,7 +444,7 @@ export default function PricingPage() {
       {showCheckoutModal && currentOrder && (
         <div
           className="studio-modal-backdrop"
-          onClick={() => !isAnalyzingProof && setShowCheckoutModal(false)}
+          onClick={() => !isSubmittingProof && setShowCheckoutModal(false)}
         >
           <div
             className="studio-modal-card"
@@ -530,7 +488,7 @@ export default function PricingPage() {
                   Pembayaran Terverifikasi!
                 </h3>
                 <p style={{ fontSize: "0.88rem", color: "var(--text-muted)", margin: "0 0 24px", lineHeight: "1.55" }}>
-                  Tagihan <strong>{currentOrder.id}</strong> telah berhasil dilunasi. <strong>100 Kredit Pro Studio</strong> telah aktif pada akun Anda dan seluruh model AI Flagship kini siap digunakan.
+                  Tagihan <strong>{currentOrder.id}</strong> telah berhasil dilunasi. <strong>{currentOrder.credits} Kredit {currentOrder.planName}</strong> telah aktif pada akun Anda dan siap digunakan.
                 </p>
                 <div style={{ display: "flex", gap: "10px", justifyContent: "center", flexWrap: "wrap" }}>
                   <a
@@ -549,12 +507,12 @@ export default function PricingPage() {
                   </a>
                 </div>
               </div>
-            ) : isSubmittedForReview ? (
-              <div style={{ padding: "32px 24px", textAlign: "center" }}>
+            ) : paymentSubmitted ? (
+              <div style={{ padding: "36px 24px", textAlign: "center" }}>
                 <div
                   style={{
-                    width: "60px",
-                    height: "60px",
+                    width: "64px",
+                    height: "64px",
                     borderRadius: "50%",
                     background: "#FEF3C7",
                     color: "#D97706",
@@ -563,7 +521,7 @@ export default function PricingPage() {
                     margin: "0 auto 16px",
                   }}
                 >
-                  <Clock size={32} />
+                  <MessageCircle size={32} />
                 </div>
                 <span
                   style={{
@@ -571,90 +529,25 @@ export default function PricingPage() {
                     fontWeight: 800,
                     color: "#92400E",
                     background: "#FDE68A",
-                    padding: "4px 14px",
+                    padding: "3px 10px",
                     borderRadius: "20px",
                     display: "inline-block",
                     marginBottom: "8px",
                   }}
                 >
-                  ⏳ MENUNGGU VERIFIKASI MUTASI
+                  MENUNGGU PERSETUJUAN ADMIN
                 </span>
-                <h3 style={{ fontSize: "1.35rem", fontWeight: 800, color: "var(--navy)", margin: "0 0 8px" }}>
-                  Bukti Pembayaran Berhasil Diterima
+                <h3 style={{ fontSize: "1.4rem", fontWeight: 800, color: "var(--navy)", margin: "0 0 8px" }}>
+                  Menunggu Pemeriksaan Admin
                 </h3>
-                <p style={{ fontSize: "0.86rem", color: "var(--text-muted)", margin: "0 auto 12px", maxWidth: "520px", lineHeight: "1.55" }}>
-                  Status: <strong>Menunggu Konfirmasi Admin</strong>. Bukti Anda telah diteruskan ke admin melalui WhatsApp. Hasil AI hanya menjadi referensi; kredit ditambahkan setelah admin mengonfirmasi pembayaran.
+                <p style={{ fontSize: "0.88rem", color: "var(--text-muted)", margin: "0 0 24px", lineHeight: "1.55" }}>
+                  Bukti pembayaran untuk tagihan <strong>{currentOrder.id}</strong> sudah Anda kirim melalui WhatsApp. Kredit akan masuk setelah pembayaran diperiksa dan disetujui administrator.
                 </p>
-                <div
-                  style={{
-                    display: "inline-block",
-                    background: "#F1F5F9",
-                    padding: "4px 14px",
-                    borderRadius: "8px",
-                    fontSize: "0.8rem",
-                    fontWeight: 750,
-                    color: "var(--navy)",
-                    marginBottom: "16px",
-                  }}
-                >
-                  Kredit sementara: <span style={{ color: "#D97706" }}>+0</span>
-                </div>
-                <p style={{ fontSize: "0.75rem", color: "var(--text-muted)", margin: "0 auto 18px", maxWidth: "460px" }}>
-                  💡 <em>Anda tidak perlu mengunggah ulang bukti yang sama. Notifikasi otomatis telah dikirimkan ke Admin.</em>
-                </p>
-
-                {extractedOcr && (
-                  <div
-                    style={{
-                      maxWidth: "480px",
-                      margin: "0 auto 20px",
-                      padding: "12px 16px",
-                      borderRadius: "10px",
-                      background: "#F8FAFC",
-                      border: "1px solid var(--border)",
-                      textAlign: "left",
-                      fontSize: "0.78rem",
-                    }}
-                  >
-                    <strong style={{ display: "block", color: "var(--navy)", marginBottom: "8px" }}>
-                      📋 Data yang terbaca dari bukti (OCR):
-                    </strong>
-                    <div style={{ display: "grid", gridTemplateColumns: "130px 1fr", gap: "6px", color: "var(--text-body)" }}>
-                      <span style={{ color: "var(--text-muted)" }}>Provider / Bank:</span>
-                      <strong style={{ color: "var(--navy)" }}>{extractedOcr.payment_provider || "QRIS"}</strong>
-
-                      <span style={{ color: "var(--text-muted)" }}>Merchant:</span>
-                      <strong style={{ color: "var(--navy)" }}>{extractedOcr.merchant_name || "—"}</strong>
-
-                      <span style={{ color: "var(--text-muted)" }}>Nominal:</span>
-                      <strong style={{ color: "var(--cobalt)" }}>{extractedOcr.amount || "—"}</strong>
-
-                      <span style={{ color: "var(--text-muted)" }}>ID Transaksi:</span>
-                      <code style={{ fontSize: "0.74rem" }}>{extractedOcr.transaction_id || "—"}</code>
-
-                      <span style={{ color: "var(--text-muted)" }}>Waktu:</span>
-                      <span>{extractedOcr.transaction_date || "—"}</span>
-
-                      <span style={{ color: "var(--text-muted)" }}>Status Sistem:</span>
-                      <strong style={{ color: "#D97706" }}>⏳ MENUNGGU VERIFIKASI MUTASI</strong>
-                    </div>
-                  </div>
-                )}
-
                 <div style={{ display: "flex", gap: "10px", justifyContent: "center", flexWrap: "wrap" }}>
-                  <a
-                    href="/account"
-                    className="btn-primary"
-                    style={{ minHeight: "40px", padding: "0 20px", fontSize: "0.86rem" }}
-                  >
-                    <User size={14} /> Cek Status di Profil Akun
+                  <a href="/account" className="btn-primary" style={{ minHeight: "42px", padding: "0 22px", fontSize: "0.9rem" }}>
+                    <User size={15} /> Lihat Status Pembayaran
                   </a>
-                  <button
-                    type="button"
-                    className="btn-secondary"
-                    onClick={() => setShowCheckoutModal(false)}
-                    style={{ minHeight: "40px", padding: "0 18px", fontSize: "0.86rem" }}
-                  >
+                  <button type="button" className="btn-secondary" onClick={() => setShowCheckoutModal(false)}>
                     Tutup
                   </button>
                 </div>
@@ -680,10 +573,10 @@ export default function PricingPage() {
                     </div>
                     <div>
                       <strong id="checkout-title" style={{ fontSize: "1.05rem", color: "var(--navy)", display: "block" }}>
-                        Pembayaran QRIS Pro Studio
+                        Pembayaran QRIS {currentOrder.planName}
                       </strong>
                       <span style={{ fontSize: "0.72rem", color: "var(--text-muted)" }}>
-                        Invoice: <strong>{currentOrder.id}</strong> • 100 Kredit Blueprint
+                        Invoice: <strong>{currentOrder.id}</strong> • {currentOrder.credits} Kredit Blueprint
                       </span>
                     </div>
                   </div>
@@ -691,7 +584,7 @@ export default function PricingPage() {
                     type="button"
                     className="studio-modal-close"
                     onClick={() => setShowCheckoutModal(false)}
-                    disabled={isAnalyzingProof}
+                    disabled={isSubmittingProof}
                   >
                     ✕
                   </button>
@@ -712,12 +605,9 @@ export default function PricingPage() {
                     }}
                   >
                     <div style={{ display: "flex", justifyContent: "space-between", marginBottom: "4px" }}>
-                      <span>Total Tagihan: <strong style={{ color: "var(--cobalt)" }}>Rp 20.000</strong></span>
-                      <span>Kredit Diperoleh: <strong style={{ color: "#059669" }}>+100 Kredit Pro Studio</strong></span>
+                      <span>Total Tagihan: <strong style={{ color: "var(--cobalt)" }}>Rp {currentOrder.amount.toLocaleString("id-ID")}</strong></span>
+                      <span>Kredit Diperoleh: <strong style={{ color: "#059669" }}>+{currentOrder.credits} Kredit {currentOrder.planName}</strong></span>
                     </div>
-                    <p style={{ margin: "4px 0 0", color: "var(--text-muted)", fontSize: "0.72rem" }}>
-                      <strong>Alur aman:</strong> bayar QRIS → unggah bukti → notifikasi masuk ke WhatsApp admin → kredit ditambahkan setelah admin mengonfirmasi. AI hanya membaca data sebagai referensi, bukan untuk menolak pembayaran.
-                    </p>
                   </div>
 
                   {/* 2-Column Responsive Layout */}
@@ -762,8 +652,8 @@ export default function PricingPage() {
                       >
                         {/* eslint-disable-next-line @next/next/no-img-element */}
                         <img
-                          src="/myqris.jpeg"
-                          alt="QRIS Pembayaran Resmi Dokumenku AI"
+                          src={currentOrder.amount === 75000 ? "/75k.jpeg" : "/20k.jpeg"}
+                          alt={`QRIS Pembayaran ${currentOrder.planName}`}
                           style={{
                             width: "100%",
                             maxHeight: "220px",
@@ -776,7 +666,7 @@ export default function PricingPage() {
 
                       <div style={{ marginBottom: "10px" }}>
                         <strong style={{ fontSize: "0.84rem", color: "var(--navy)", display: "block" }}>
-                          Jasa pembuatan websi...
+                          Dokumenku AI
                         </strong>
                         <code style={{ fontSize: "0.7rem", color: "var(--text-muted)", display: "block" }}>
                           NMID: ID1026479441309 • A01
@@ -784,8 +674,8 @@ export default function PricingPage() {
                       </div>
 
                       <a
-                        href="/myqris.jpeg"
-                        download="QRIS-Dokumenku-AI.jpeg"
+                        href={currentOrder.amount === 75000 ? "/75k.jpeg" : "/20k.jpeg"}
+                        download={`QRIS-${currentOrder.amount.toLocaleString("id-ID")}.jpeg`}
                         className="btn-secondary"
                         style={{ minHeight: "30px", padding: "0 12px", fontSize: "0.74rem", width: "100%", justifyContent: "center" }}
                       >
@@ -793,107 +683,68 @@ export default function PricingPage() {
                       </a>
                     </div>
 
-                    {/* Right Column: Upload Proof & Pre-Validation */}
+                    {/* Right Column: proof is sent manually through WhatsApp */}
                     <div style={{ display: "flex", flexDirection: "column", gap: "10px" }}>
-                      <div>
-                        <label style={{ display: "block", fontSize: "0.78rem", fontWeight: 750, color: "var(--navy)", marginBottom: "6px" }}>
-                          Unggah Bukti Transaksi (JPG, PNG, WebP — Maks 5 MB)
-                        </label>
-
-                        {!proofImage ? (
-                          <label
-                            style={{
-                              display: "flex",
-                              flexDirection: "column",
-                              alignItems: "center",
-                              justifyContent: "center",
-                              gap: "6px",
-                              padding: "16px 12px",
-                              borderRadius: "10px",
-                              border: "2px dashed var(--cobalt-light, #93C5FD)",
-                              background: "#F8FAFC",
-                              cursor: "pointer",
-                              transition: "all 0.15s ease",
-                            }}
-                          >
-                            <div
-                              style={{
-                                width: "34px",
-                                height: "34px",
-                                borderRadius: "50%",
-                                background: "#EFF6FF",
-                                color: "var(--cobalt)",
-                                display: "grid",
-                                placeItems: "center",
-                              }}
-                            >
-                              <UploadCloud size={18} />
-                            </div>
-                            <div style={{ textAlign: "center" }}>
-                              <span style={{ fontSize: "0.8rem", fontWeight: 750, color: "var(--cobalt)", display: "block" }}>
-                                Pilih Foto / Screenshot Struk
-                              </span>
-                              <span style={{ fontSize: "0.68rem", color: "var(--text-muted)" }}>
-                                Pastikan gambar jelas, tidak terpotong (Maks. 5 MB)
-                              </span>
-                            </div>
-                            <input
-                              type="file"
-                              accept="image/jpeg,image/png,image/webp"
-                              style={{ display: "none" }}
-                              onChange={handleFileSelect}
-                            />
-                          </label>
-                        ) : (
+                      <div
+                        style={{
+                          padding: "16px",
+                          borderRadius: "12px",
+                          border: "1px solid #BBF7D0",
+                          background: "#F0FDF4",
+                        }}
+                      >
+                        <div style={{ display: "flex", alignItems: "center", gap: "9px", marginBottom: "10px" }}>
                           <div
                             style={{
-                              display: "flex",
-                              alignItems: "center",
-                              justifyContent: "space-between",
-                              padding: "8px 12px",
-                              borderRadius: "10px",
-                              border: "1.5px solid #BBF7D0",
-                              background: "#F0FDF4",
+                              width: "36px",
+                              height: "36px",
+                              borderRadius: "50%",
+                              display: "grid",
+                              placeItems: "center",
+                              background: "#25D366",
+                              color: "#FFFFFF",
                             }}
                           >
-                            <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
-                              {/* eslint-disable-next-line @next/next/no-img-element */}
-                              <img
-                                src={proofImage}
-                                alt="Bukti Transfer"
-                                style={{
-                                  width: "40px",
-                                  height: "40px",
-                                  objectFit: "cover",
-                                  borderRadius: "6px",
-                                  border: "1px solid var(--border)",
-                                }}
-                              />
-                              <div>
-                                <strong style={{ fontSize: "0.78rem", color: "#065F46", display: "block" }}>
-                                  Struk Terpilih
-                                </strong>
-                                <span style={{ fontSize: "0.68rem", color: "#059669" }}>
-                                  Siap dikirim ke antrean review
-                                </span>
-                              </div>
-                            </div>
-
-                            <button
-                              type="button"
-                              className="btn-secondary"
-                              style={{ minHeight: "26px", padding: "0 8px", fontSize: "0.7rem", color: "#DC2626" }}
-                              onClick={() => setProofImage(null)}
-                              title="Ganti Foto"
-                            >
-                              <Trash2 size={12} /> Ganti
-                            </button>
+                            <MessageCircle size={19} strokeWidth={2.4} />
                           </div>
-                        )}
+                          <div>
+                            <strong style={{ fontSize: "0.86rem", color: "#065F46", display: "block" }}>
+                              Kirim bukti langsung ke WhatsApp admin
+                            </strong>
+                            <span style={{ fontSize: "0.72rem", color: "#047857" }}>Tidak ada unggahan ke sistem, bot, atau OCR.</span>
+                          </div>
+                        </div>
+
+                        <ol style={{ margin: "0 0 14px", paddingLeft: "19px", color: "#166534", fontSize: "0.76rem", lineHeight: "1.65" }}>
+                          <li>Selesaikan pembayaran QRIS sesuai nominal.</li>
+                          <li>Kirim foto atau screenshot bukti pembayaran di WhatsApp.</li>
+                          <li>Klik tombol konfirmasi setelah pesan berhasil dikirim.</li>
+                        </ol>
+
+                        <a
+                          href={getWhatsAppProofUrl(currentOrder)}
+                          target="_blank"
+                          rel="noreferrer"
+                          style={{
+                            minHeight: "40px",
+                            width: "100%",
+                            borderRadius: "9px",
+                            background: "#25D366",
+                            color: "#FFFFFF",
+                            display: "inline-flex",
+                            alignItems: "center",
+                            justifyContent: "center",
+                            gap: "8px",
+                            textDecoration: "none",
+                            fontSize: "0.8rem",
+                            fontWeight: 800,
+                          }}
+                        >
+                          <MessageCircle size={16} /> Kirim Bukti ke WhatsApp
+                        </a>
                       </div>
 
-                      {/* AI Error Alert if verification failed */}
-                      {aiErrorMsg && (
+                      {paymentError && (
                         <div
                           style={{
                             padding: "8px 10px",
@@ -907,9 +758,9 @@ export default function PricingPage() {
                             lineHeight: "1.35",
                           }}
                         >
-                          <AlertCircle size={14} style={{ flexShrink: 0, marginTop: "2px" }} />
+                          <span aria-hidden="true" style={{ fontWeight: 900 }}>!</span>
                           <div>
-                            <strong>Validasi Gagal:</strong> {aiErrorMsg}
+                            <strong>Pembayaran belum diproses:</strong> {paymentError}
                           </div>
                         </div>
                       )}
@@ -923,7 +774,7 @@ export default function PricingPage() {
                     type="button"
                     className="btn-secondary"
                     onClick={() => setShowCheckoutModal(false)}
-                    disabled={isAnalyzingProof}
+                    disabled={isSubmittingProof}
                     style={{ minHeight: "36px", fontSize: "0.82rem" }}
                   >
                     Tutup / Bayar Nanti
@@ -932,17 +783,17 @@ export default function PricingPage() {
                   <button
                     type="button"
                     className="btn-primary"
-                    onClick={handleUploadAndVerifyWithAi}
-                    disabled={isAnalyzingProof || !proofImage}
+                    onClick={handleMarkProofSent}
+                    disabled={isSubmittingProof}
                     style={{ minWidth: "190px", minHeight: "36px", fontSize: "0.82rem" }}
                   >
-                    {isAnalyzingProof ? (
+                    {isSubmittingProof ? (
                       <>
-                        <Loader2 className="animate-spin" size={14} /> Memproses Bukti...
+                        <Loader2 className="animate-spin" size={14} /> Memproses...
                       </>
                     ) : (
                       <>
-                        <UploadCloud size={14} /> Unggah Bukti Pembayaran
+                        <CheckCircle2 size={14} /> Saya Sudah Kirim Bukti
                       </>
                     )}
                   </button>

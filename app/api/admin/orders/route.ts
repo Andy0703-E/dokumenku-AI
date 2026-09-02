@@ -1,6 +1,6 @@
 import { NextRequest } from "next/server";
 import { getDatabase, executeAtomicPaymentApproval, insertAuditLogEntry } from "@/db";
-import { getCurrentUser } from "@/lib/auth";
+import { getCurrentAdmin } from "@/lib/auth";
 import {
   ERROR_CODES,
   REJECTION_CODES,
@@ -13,14 +13,14 @@ import {
 
 export async function GET() {
   const requestId = generateRequestId();
-  const user = await getCurrentUser();
-  if (!user || user.role !== "admin") {
+  const user = await getCurrentAdmin();
+  if (!user) {
     return apiError(ERROR_CODES.AUTH_FORBIDDEN, "Akses terbatas untuk administrator.", 403, requestId);
   }
 
   try {
     const db = await getDatabase();
-    const ordersResult = await db.execute("SELECT * FROM orders ORDER BY created_at DESC LIMIT 100");
+    const ordersResult = await db.execute("SELECT id, user_email AS userEmail, plan_name AS planName, amount, credits, payment_method AS paymentMethod, status, CASE WHEN proof_image IS NULL OR proof_image = '' THEN 0 ELSE 1 END AS hasProof, ai_status AS aiStatus, ai_analysis AS aiAnalysis, ocr_merchant AS ocrMerchant, ocr_nmid AS ocrNmid, ocr_amount AS ocrAmount, ocr_transaction_id AS ocrTransactionId, ocr_date AS ocrDate, ocr_status AS ocrStatus, created_at AS createdAt, expires_at AS expiresAt, paid_at AS paidAt FROM orders ORDER BY created_at DESC LIMIT 100");
     return apiSuccess({ orders: ordersResult.rows }, 200, requestId);
   } catch (error) {
     return apiError(ERROR_CODES.INTERNAL_SERVER_ERROR, error instanceof Error ? error.message : "Gagal memuat daftar pesanan.", 500, requestId);
@@ -29,14 +29,14 @@ export async function GET() {
 
 export async function POST(request: NextRequest) {
   const requestId = generateRequestId();
-  const user = await getCurrentUser();
-  if (!user || user.role !== "admin") {
+  const user = await getCurrentAdmin();
+  if (!user) {
     return apiError(ERROR_CODES.AUTH_FORBIDDEN, "Forbidden: Akses hanya diizinkan untuk Admin.", 403, requestId);
   }
 
   const { orderId, action, reasonCode, reasonNote } = (await request.json().catch(() => ({}))) as unknown as {
     orderId?: string;
-    action?: "approve" | "cancel";
+    action?: "approve" | "cancel" | "delete";
     reasonCode?: string;
     reasonNote?: string;
   };
@@ -66,6 +66,55 @@ export async function POST(request: NextRequest) {
         userEmail: result.order?.user_email,
         message: `Pembayaran ${orderId} berhasil diverifikasi! +${result.creditsGranted} Kredit ditambahkan ke ${result.order?.user_email}.`,
       }, 200, requestId);
+    } else if (action === "delete") {
+      const orderResult = await db.execute({ sql: "SELECT * FROM orders WHERE id = ?", args: [orderId] });
+      const order = orderResult.rows[0] as unknown as { id: string; user_email: string; status: string; amount: number; payment_method: string } | undefined;
+
+      if (!order) return apiError(ERROR_CODES.RESOURCE_NOT_FOUND, "Tagihan tidak ditemukan.", 404, requestId);
+      if (order.status === "PAID" || order.status === "paid" || order.status === "COMPLETED") {
+        return apiError(ERROR_CODES.PAYMENT_INVALID_STATE, "Invoice yang sudah membagikan kredit tidak dapat dihapus. Riwayat pembayaran tetap disimpan untuk menjaga saldo akun.", 409, requestId);
+      }
+
+      const transaction = await db.transaction("write");
+      try {
+        const ledgerResult = await transaction.execute({
+          sql: "SELECT id FROM credit_transactions WHERE order_id = ? LIMIT 1",
+          args: [orderId],
+        });
+        if (ledgerResult.rows[0]) {
+          await transaction.rollback();
+          return apiError(ERROR_CODES.PAYMENT_INVALID_STATE, "Invoice ini sudah memiliki catatan kredit sehingga tidak dapat dihapus.", 409, requestId);
+        }
+
+        const deleted = await transaction.execute({
+          sql: "DELETE FROM orders WHERE id = ? AND status NOT IN ('PAID', 'paid', 'COMPLETED')",
+          args: [orderId],
+        });
+        if (deleted.rowsAffected !== 1) {
+          await transaction.rollback();
+          return apiError(ERROR_CODES.PAYMENT_INVALID_STATE, "Invoice tidak dapat dihapus karena statusnya telah berubah.", 409, requestId);
+        }
+
+        await insertAuditLogEntry(transaction, {
+          orderId: order.id,
+          action: "ORDER_DELETED",
+          actorEmail: user.email,
+          provider: order.payment_method || "QRIS",
+          transactionId: "N/A",
+          amount: order.amount,
+          creditsGranted: 0,
+          statusBefore: order.status,
+          statusAfter: "DELETED",
+          notes: `Invoice dihapus oleh administrator ${user.email}.`,
+          createdAt: now,
+        });
+        await transaction.commit();
+      } catch (error) {
+        await transaction.rollback();
+        throw error;
+      }
+
+      return apiSuccess({ orderId, status: "DELETED", message: `Invoice ${orderId} berhasil dihapus.` }, 200, requestId);
     } else if (action === "cancel") {
       const code = (reasonCode || "").trim().toUpperCase() as RejectionCode;
 

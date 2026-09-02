@@ -156,7 +156,7 @@ const FAQS = [
   {
     icon: ShieldCheck,
     q: "Bagaimana pembayaran dikonfirmasi?",
-    a: "Setelah membayar melalui QRIS, unggah bukti pembayaran pada invoice Anda. Notifikasi akan diteruskan ke admin melalui WhatsApp untuk konfirmasi manual. Hasil pembacaan AI hanya menjadi referensi dan tidak otomatis menolak pembayaran.",
+    a: "Setelah membayar melalui QRIS, kirim foto bukti pembayaran langsung ke WhatsApp admin dari invoice Anda. Admin memeriksa pembayaran dan menyetujuinya melalui dashboard sebelum kredit ditambahkan.",
   },
   {
     icon: Edit3,
@@ -304,7 +304,7 @@ export default function LandingPage({ onStart }: LandingPageProps) {
 
           <div className="trust-points-row">
             <span className="trust-check">
-              <Check size={16} strokeWidth={3} /> 1 Kredit Gratis Saat Daftar
+              <Check size={16} strokeWidth={3} /> Tanpa Langganan Bulanan
             </span>
             <span style={{ color: "var(--text-faint)" }}>•</span>
             <span>Tanpa Langganan</span>
@@ -630,7 +630,7 @@ export default function LandingPage({ onStart }: LandingPageProps) {
           </div>
           <div>
             <strong>Pembayaran diverifikasi admin, bukan ditolak oleh AI</strong>
-            <p>Unggah bukti QRIS pada invoice Anda. Notifikasi langsung dikirim ke WhatsApp admin untuk konfirmasi manual sebelum kredit ditambahkan.</p>
+            <p>Kirim bukti QRIS langsung ke WhatsApp admin dari invoice Anda. Admin memeriksa pembayaran sebelum kredit ditambahkan.</p>
           </div>
           <a href="/pricing" className="landing-payment-trust-link">Lihat cara pembayaran <ArrowRight size={16} /></a>
         </aside>

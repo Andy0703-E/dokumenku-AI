@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getDatabase } from "@/db";
 import { getCurrentUser } from "@/lib/auth";
-import { sendWhatsAppMessage, getAdminPhone } from "@/lib/whatsapp-gateway";
 
 export async function POST(request: NextRequest) {
   const body = await request.json().catch(() => ({}));
@@ -30,23 +29,10 @@ export async function POST(request: NextRequest) {
     });
     const chatId = Number(result.lastInsertRowid ?? 0);
 
-    const adminPhone = getAdminPhone();
-    const waMessage = `💬 *Chat Baru dari Dokumenku AI*
-
-👤 *User:* ${user.email}
-🆔 *Chat ID:* #${chatId}
-
-💬 *Pesan:*
-${message.trim()}
-
-📝 Balas dari dashboard admin.`;
-
-    sendWhatsAppMessage(adminPhone, waMessage).catch(() => {});
-
     return NextResponse.json({
       ok: true,
       chatId,
-      message: "Pesan terkirim! Admin akan segera merespons.",
+      message: "Pesan terkirim! Admin akan segera merespons melalui dashboard.",
     });
   } catch (error) {
     return NextResponse.json(

@@ -41,10 +41,10 @@ export async function POST(request: NextRequest) {
       status: order.status,
       credits: account?.available_credits ?? 0,
       message: order.status === "COMPLETED" || order.status === "PAID"
-        ? "Pesanan sudah berhasil diproses."
-        : order.status === "APPROVED"
-          ? "Pesanan disetujui. Silakan hubungi admin untuk klaim kredit."
-          : `Status pesanan: ${order.status}. Menunggu persetujuan admin.`,
+        ? "Pembayaran berhasil dicatat dan kredit sudah masuk ke akun Anda."
+        : order.status === "PENDING_REVIEW"
+          ? "Invoice sedang menunggu pemeriksaan administrator. Kredit akan masuk setelah pembayaran disetujui."
+          : `Status pesanan: ${order.status}. Kirim bukti pembayaran melalui WhatsApp admin untuk melanjutkan.`,
     });
   } catch (error) {
     return NextResponse.json(

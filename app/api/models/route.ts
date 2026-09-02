@@ -6,6 +6,11 @@ import { isProviderMaintenance, PROVIDER_MAINTENANCE_MESSAGE } from "@/lib/provi
 import { getConfiguredAiProviders } from "@/lib/ai-provider-pool";
 
 export async function GET() {
+  const user = await getCurrentUser();
+  if (!user) {
+    return NextResponse.json({ error: "Silakan masuk terlebih dahulu." }, { status: 401 });
+  }
+
   const providers = getConfiguredAiProviders();
   if (providers.length === 0) {
     return NextResponse.json(
@@ -15,21 +20,18 @@ export async function GET() {
   }
 
   let isPro = false;
-  const user = await getCurrentUser();
-  if (user) {
-    if (user.role === "admin") {
-      isPro = true;
-    } else {
-      try {
-        const db = await getDatabase();
-        const purchasedResult = await db.execute({
-          sql: "SELECT 1 FROM credit_transactions WHERE user_email = ? AND amount > 3 AND reason != 'Kredit awal akun baru' LIMIT 1",
-          args: [user.email],
-        });
-        if (purchasedResult.rows[0]) isPro = true;
-      } catch {
-        isPro = false;
-      }
+  if (user.role === "admin") {
+    isPro = true;
+  } else {
+    try {
+      const db = await getDatabase();
+      const purchasedResult = await db.execute({
+        sql: "SELECT 1 FROM credit_transactions WHERE user_email = ? AND amount > 3 AND reason != 'Kredit awal akun baru' LIMIT 1",
+        args: [user.email],
+      });
+      if (purchasedResult.rows[0]) isPro = true;
+    } catch {
+      isPro = false;
     }
   }
 

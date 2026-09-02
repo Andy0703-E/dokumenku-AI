@@ -372,7 +372,7 @@ export default function AuthPanel({ initialMode = "login" }: AuthPanelProps) {
               ) : (
                 <>
                   <UserPlus size={18} />
-                  Daftar & Klaim 1 Kredit
+                  Daftar Akun
                 </>
               )}
             </button>

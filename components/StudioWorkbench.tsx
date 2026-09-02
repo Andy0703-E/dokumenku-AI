@@ -107,7 +107,7 @@ export default function StudioWorkbench({
   const [providerErrorMsg, setProviderErrorMsg] = useState("");
   const [creditStatus, setCreditStatus] = useState("Memeriksa status kredit...");
 
-  const [creditsRemaining, setCreditsRemaining] = useState<number>(3);
+  const [creditsRemaining, setCreditsRemaining] = useState<number>(0);
   const [isAuthenticated, setIsAuthenticated] = useState<boolean>(false);
   const [showOutOfCreditsModal, setShowOutOfCreditsModal] = useState<boolean>(false);
   const [promptError, setPromptError] = useState<string>("");
@@ -188,12 +188,12 @@ export default function StudioWorkbench({
           setCreditStatus(`Saldo: ${credits} kredit`);
         }
       } else {
-        setCreditStatus(`Tamu: ${credits} kredit starter`);
+        setCreditStatus("Masuk untuk melihat saldo kredit");
       }
     } catch {
-      setCreditsRemaining(3);
+      setCreditsRemaining(0);
       setIsAuthenticated(false);
-      setCreditStatus("Tamu: 3 kredit starter");
+      setCreditStatus("Masuk untuk melihat saldo kredit");
     }
   }
 
@@ -229,7 +229,7 @@ export default function StudioWorkbench({
     if (creditsRemaining <= 0) {
       setShowOutOfCreditsModal(true);
       toast.error(
-        "Kredit Anda telah habis. Silakan daftar akun gratis atau beli paket untuk melanjutkan.",
+        "Kredit Anda telah habis. Silakan masuk lalu beli paket untuk melanjutkan.",
       );
       return;
     }

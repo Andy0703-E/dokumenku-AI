@@ -33,7 +33,11 @@ export async function POST(request: NextRequest) {
 
     const { hash, salt } = hashPassword(password ?? "");
     const now = new Date().toISOString();
-    const initialCredits = Math.max(0, Math.min(100, Number.parseInt(process.env.INITIAL_CREDITS ?? "1", 10) || 1));
+    // Free credits are opt-in. Leaving them enabled by default makes scripted
+    // registrations a direct path to consuming the paid AI provider quota.
+    const initialCredits = process.env.ALLOW_INITIAL_CREDITS === "true"
+      ? Math.max(0, Math.min(100, Number.parseInt(process.env.INITIAL_CREDITS ?? "0", 10) || 0))
+      : 0;
     const fp = deviceFingerprint && typeof deviceFingerprint === "string" && deviceFingerprint.length === 64 ? deviceFingerprint : null;
     await db.execute({
       sql: "INSERT INTO users (email, password_hash, password_salt, available_credits, device_fingerprint, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)",

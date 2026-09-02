@@ -3,7 +3,7 @@ import PricingPage from "@/components/PricingPage";
 
 export const metadata: Metadata = {
   title: "Harga · Dokumenku AI",
-  description: "Lihat paket harga dan kredit Dokumenku AI. Mulai gratis, upgrade kapan saja.",
+  description: "Lihat paket harga dan kredit Dokumenku AI. Pilih paket sesuai kebutuhan.",
 };
 
 export default function Pricing() {

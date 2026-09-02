@@ -16,6 +16,7 @@ import {
 } from "@/lib/model-router";
 
 const MAX_AUTO_FALLBACK_ATTEMPTS = 3;
+const MAX_OUTPUT_TOKENS = 24_000;
 
 /**
  * Fetch available models from provider, using cache if available.
@@ -167,13 +168,21 @@ function wrapJsonAsSSE(result: unknown, metadata: Record<string, string> = {}): 
 }
 
 export async function POST(request: NextRequest) {
-  const body = await request.json();
+  const user = await getCurrentUser();
+  if (!user) {
+    return NextResponse.json({ error: "Silakan masuk terlebih dahulu untuk membuat dokumen." }, { status: 401 });
+  }
+
+  const body = await request.json().catch(() => null);
+  if (!body || typeof body !== "object") {
+    return NextResponse.json({ error: "Permintaan pembuatan dokumen tidak valid." }, { status: 400 });
+  }
   const {
     generationId,
     selectedModel,
     userContent,
     systemPrompt,
-    maxOutputTokens = 24000,
+    maxOutputTokens = MAX_OUTPUT_TOKENS,
     stage,
   } = body as {
     generationId?: string;
@@ -183,11 +192,15 @@ export async function POST(request: NextRequest) {
     maxOutputTokens?: number;
     stage?: string;
   };
-  if (generationId?.startsWith("rev-")) {
+  if (typeof generationId === "string" && generationId.startsWith("rev-")) {
     return NextResponse.json(
       { error: "Revisi AI sudah tidak tersedia. Gunakan Edit Manual untuk memperbarui dokumen." },
       { status: 410 },
     );
+  }
+
+  if (!Number.isInteger(maxOutputTokens) || maxOutputTokens < 1 || maxOutputTokens > MAX_OUTPUT_TOKENS) {
+    return NextResponse.json({ error: `Batas keluaran dokumen harus antara 1 dan ${MAX_OUTPUT_TOKENS} token.` }, { status: 400 });
   }
 
   const configuredProviders = getConfiguredAiProviders();
@@ -198,12 +211,29 @@ export async function POST(request: NextRequest) {
     );
   }
 
-  if (!generationId) {
+  if (!generationId || typeof generationId !== "string" || generationId.length > 128) {
     return NextResponse.json({ error: "Sesi pembuatan dokumen tidak valid." }, { status: 401 });
   }
-  const user = await getCurrentUser();
+  if (typeof selectedModel !== "string" || typeof userContent !== "string" || typeof systemPrompt !== "string") {
+    return NextResponse.json({ error: "Data pembuatan dokumen tidak valid." }, { status: 400 });
+  }
+  if (userContent.length > 60_000 || systemPrompt.length > 100_000) {
+    return NextResponse.json({ error: "Isi dokumen melebihi batas yang diizinkan." }, { status: 400 });
+  }
   const isAuto = isAutoModel(selectedModel);
   const modelId = selectedModel.trim();
+
+  // A signed user must still be limited to models the configured provider has
+  // explicitly exposed. Otherwise this route becomes an arbitrary-model proxy
+  // that can spend more provider quota than one document credit represents.
+  if (!isAuto) {
+    const availableModels = await ensureAvailableModels(configuredProviders);
+    const selected = availableModels.find((model) => model.id === modelId);
+    if (!selected || selected.healthStatus === "maintenance" || selected.healthStatus === "degraded") {
+      return NextResponse.json({ error: "Model yang dipilih tidak tersedia." }, { status: 400 });
+    }
+  }
+
   // Independent document stages rotate across the configured gateways in
   // balanced mode, while each stage keeps a stable preferred provider.
   const providerOrder = configuredProviders;
