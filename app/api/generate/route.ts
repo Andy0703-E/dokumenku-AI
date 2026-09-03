@@ -112,23 +112,8 @@ async function ensureAvailableModels(providers: AiProvider[]): Promise<ModelItem
 
   const models = [...new Map(results.flat().map((model) => [model.id, model])).values()];
 
-  // Inject hardcoded promo models so the router can select them
-  const { HARDCODED_MODELS } = await import("@/lib/models-config");
-  for (const hm of HARDCODED_MODELS) {
-    if (!models.find((m) => m.id === hm.id)) {
-      models.push({
-        id: hm.id,
-        name: hm.name,
-        tier: hm.tier,
-        badge: "Promo",
-        isFlagship: false,
-        healthStatus: "healthy",
-        availabilityLabel: "Tersedia",
-        statusSource: "admin" as const,
-        supportsVision: false,
-      });
-    }
-  }
+  // No longer injecting hardcoded promo models (they were timeout-prone)
+  // Models are now retrieved directly from provider's /models endpoint
 
   if (models.length > 0) setCachedModels(models);
   return models;
@@ -486,37 +471,13 @@ export async function POST(request: NextRequest) {
         );
       }
 
-      // ── Map promo model IDs based on stage ──────────────────────────────
-      // promo:05 = main docs (3.5-flash → 3.5-flash-2603 → 3.7-flash)
-      // promo:05-repair = repair/alignment (3.7-flash → 3.5-flash-2603 → 3.5-flash)
-      const REPAIR_STAGES = ["quality-repair", "targeted-repair", "alignment"] as const;
-      const isRepairStage = REPAIR_STAGES.includes(resolvedStage as typeof REPAIR_STAGES[number]);
-
-      // Map promo model to actual model ID based on stage
-      function mapPromoModel(modelId: string): string {
-        if (modelId === "promo:05") {
-          // Main documents: prefer 3.5-flash first
-          return isRepairStage ? "sf/step-3.7-flash" : "sf/step-3.5-flash";
-        }
-        if (modelId === "promo:05-repair") {
-          // Repair/alignment: prefer 3.7-flash first
-          return isRepairStage ? "sf/step-3.7-flash" : "sf/step-3.5-flash";
-        }
-        return modelId;
-      }
-
-      // Apply mapping to fallback chain
-      const mappedChain = fallbackChain.map((c) => ({
-        ...c,
-        modelId: mapPromoModel(c.modelId),
-      }));
-
       // Attempt with fallback chain
+      // (No longer mapping promo models - they have been removed)
       let lastError = "";
       let lastStatus = 500;
 
-      for (let attemptIndex = 0; attemptIndex < Math.min(mappedChain.length, MAX_AUTO_FALLBACK_ATTEMPTS); attemptIndex++) {
-        const candidate = mappedChain[attemptIndex];
+      for (let attemptIndex = 0; attemptIndex < Math.min(fallbackChain.length, MAX_AUTO_FALLBACK_ATTEMPTS); attemptIndex++) {
+        const candidate = fallbackChain[attemptIndex];
         const attemptStart = Date.now();
 
         // Create attempt row BEFORE provider call (server-authoritative)
