@@ -8,6 +8,10 @@
  * - User tier (starter vs pro)
  *
  * Fallback chain: primary → fallback #1 → fallback #2 → deterministic recovery
+ *
+ * ⚠️ NOTE: sf/step-3.5-flash and sf/step-3.7-flash from InviBuilder are experiencing
+ * chronic timeouts (>10 seconds). These models have been deprioritized in favor of
+ * more stable alternatives. The routing system will attempt fallbacks aggressively.
  */
 
 import type { ModelItem } from "./models-config";
@@ -25,7 +29,7 @@ export type GenerationStage =
   | "targeted-repair"
   | "alignment";
 
-export const ROUTING_VERSION = "1.0.1";
+export const ROUTING_VERSION = "1.0.2"; // Bumped for timeout-unstable model avoidance
 
 // ── Per-Stage Model Preferences ────────────────────────────────────────────
 // Higher weight = more important for that stage.
@@ -45,129 +49,208 @@ type StagePreference = {
 const STAGE_PATTERNS = {
   promo05: /promo:05$/i,
   promo05Repair: /promo:05-repair$/i,
+  // ⚠️ DEPRECATED: These models timeout frequently and should be avoided
   stepFlash: /sf\/step-3\.[57]-flash/i,
   step35Flash: /sf\/step-3\.5-flash$/i,
   step35Flash2603: /sf\/step-3\.5-flash-2603/i,
   step37Flash: /sf\/step-3\.7-flash$/i,
+  // Alternative/fallback patterns for stable models
+  gpt4oMini: /gpt-4o-mini/i,
+  claude3Haiku: /claude-3-5-haiku/i,
+  deepseekFlash: /deepseek-v4-flash/i,
+  geminiFlash: /gemini-1\.5-flash/i,
+  alternative: /gpt-4o-mini|claude-3-5-haiku|deepseek-v4-flash|gemini-1\.5-flash/i,
 };
 
 const STAGE_PREFERENCES: Record<GenerationStage, StagePreference> = {
   blueprint: {
+    // Prioritize stable models first, then promo (which routes to unstable models)
     preferredPatterns: [
+      STAGE_PATTERNS.alternative,
       STAGE_PATTERNS.promo05,
-      STAGE_PATTERNS.step35Flash,
-      STAGE_PATTERNS.step35Flash2603,
-      STAGE_PATTERNS.step37Flash,
     ],
-    avoidPatterns: [],
+    // Deprioritize known timeout models
+    avoidPatterns: [STAGE_PATTERNS.stepFlash],
     preferredBonus: 30,
-    avoidPenalty: 0,
+    avoidPenalty: 40, // Strong penalty for timeout-prone models
   },
   prd: {
     preferredPatterns: [
+      STAGE_PATTERNS.alternative,
       STAGE_PATTERNS.promo05,
-      STAGE_PATTERNS.step35Flash,
-      STAGE_PATTERNS.step35Flash2603,
-      STAGE_PATTERNS.step37Flash,
     ],
-    avoidPatterns: [],
+    avoidPatterns: [STAGE_PATTERNS.stepFlash],
     preferredBonus: 30,
-    avoidPenalty: 0,
+    avoidPenalty: 40,
   },
   "tech-stack": {
     preferredPatterns: [
+      STAGE_PATTERNS.alternative,
       STAGE_PATTERNS.promo05,
-      STAGE_PATTERNS.step35Flash,
-      STAGE_PATTERNS.step35Flash2603,
-      STAGE_PATTERNS.step37Flash,
     ],
-    avoidPatterns: [],
+    avoidPatterns: [STAGE_PATTERNS.stepFlash],
     preferredBonus: 30,
-    avoidPenalty: 0,
+    avoidPenalty: 40,
   },
   "ui-ux": {
     preferredPatterns: [
+      STAGE_PATTERNS.alternative,
       STAGE_PATTERNS.promo05,
-      STAGE_PATTERNS.step35Flash,
-      STAGE_PATTERNS.step35Flash2603,
-      STAGE_PATTERNS.step37Flash,
     ],
-    avoidPatterns: [],
+    avoidPatterns: [STAGE_PATTERNS.stepFlash],
     preferredBonus: 30,
-    avoidPenalty: 0,
+    avoidPenalty: 40,
   },
   schema: {
     preferredPatterns: [
+      STAGE_PATTERNS.alternative,
       STAGE_PATTERNS.promo05,
-      STAGE_PATTERNS.step35Flash,
-      STAGE_PATTERNS.step35Flash2603,
-      STAGE_PATTERNS.step37Flash,
     ],
-    avoidPatterns: [],
+    avoidPatterns: [STAGE_PATTERNS.stepFlash],
     preferredBonus: 30,
-    avoidPenalty: 0,
+    avoidPenalty: 40,
   },
   revision: {
     preferredPatterns: [
+      STAGE_PATTERNS.alternative,
       STAGE_PATTERNS.promo05,
-      STAGE_PATTERNS.step35Flash,
-      STAGE_PATTERNS.step35Flash2603,
-      STAGE_PATTERNS.step37Flash,
     ],
-    avoidPatterns: [],
+    avoidPatterns: [STAGE_PATTERNS.stepFlash],
     preferredBonus: 30,
-    avoidPenalty: 0,
+    avoidPenalty: 40,
   },
   "quality-repair": {
     preferredPatterns: [
+      STAGE_PATTERNS.alternative,
       STAGE_PATTERNS.promo05Repair,
-      STAGE_PATTERNS.step37Flash,
-      STAGE_PATTERNS.step35Flash2603,
-      STAGE_PATTERNS.step35Flash,
     ],
-    avoidPatterns: [],
+    avoidPatterns: [STAGE_PATTERNS.stepFlash],
     preferredBonus: 30,
-    avoidPenalty: 0,
+    avoidPenalty: 40,
   },
   "targeted-repair": {
     preferredPatterns: [
+      STAGE_PATTERNS.alternative,
       STAGE_PATTERNS.promo05Repair,
-      STAGE_PATTERNS.step37Flash,
-      STAGE_PATTERNS.step35Flash2603,
-      STAGE_PATTERNS.step35Flash,
     ],
-    avoidPatterns: [],
+    avoidPatterns: [STAGE_PATTERNS.stepFlash],
     preferredBonus: 30,
-    avoidPenalty: 0,
+    avoidPenalty: 40,
   },
   alignment: {
     preferredPatterns: [
+      STAGE_PATTERNS.alternative,
       STAGE_PATTERNS.promo05Repair,
-      STAGE_PATTERNS.step37Flash,
-      STAGE_PATTERNS.step35Flash2603,
-      STAGE_PATTERNS.step35Flash,
     ],
-    avoidPatterns: [],
+    avoidPatterns: [STAGE_PATTERNS.stepFlash],
     preferredBonus: 30,
-    avoidPenalty: 0,
+    avoidPenalty: 40,
   },
 };
 
 // Fast models are used for the first, high-volume pass. The explicit order
 // makes routing predictable even before this server has enough latency data.
 // A pattern may match with or without a provider prefix (e.g. a1/glm-5.1).
+//
+// ⚠️ ROUTING PRIORITY CHANGED:
+// - Removed sf/step-3.5-flash and sf/step-3.7-flash from primary priority
+// - Added stable alternatives (gpt-4o-mini, claude-3-5-haiku, deepseek-v4-flash, gemini-1.5-flash)
+// - promo:05 models now act as fallback (they eventually route to the timeout-prone step models)
+// - System will attempt fallback chain aggressively to find any available stable model
 const STAGE_MODEL_PRIORITY: Record<GenerationStage, RegExp[]> = {
-  // Main docs: prefer promo:05 and step-3.5-flash
-  blueprint: [/promo:05$/i, /sf\/step-3\.5-flash$/i, /sf\/step-3\.5-flash-2603$/i, /sf\/step-3\.7-flash$/i],
-  prd: [/promo:05$/i, /sf\/step-3\.5-flash$/i, /sf\/step-3\.5-flash-2603$/i, /sf\/step-3\.7-flash$/i],
-  "tech-stack": [/promo:05$/i, /sf\/step-3\.5-flash$/i, /sf\/step-3\.5-flash-2603$/i, /sf\/step-3\.7-flash$/i],
-  "ui-ux": [/promo:05$/i, /sf\/step-3\.5-flash$/i, /sf\/step-3\.5-flash-2603$/i, /sf\/step-3\.7-flash$/i],
-  schema: [/promo:05$/i, /sf\/step-3\.5-flash$/i, /sf\/step-3\.5-flash-2603$/i, /sf\/step-3\.7-flash$/i],
-  revision: [/promo:05$/i, /sf\/step-3\.5-flash$/i, /sf\/step-3\.5-flash-2603$/i, /sf\/step-3\.7-flash$/i],
-  // Repair/Alignment: prefer promo:05-repair then step-3.7-flash
-  "quality-repair": [/promo:05-repair$/i, /sf\/step-3\.7-flash$/i, /sf\/step-3\.5-flash-2603$/i, /sf\/step-3\.5-flash$/i],
-  "targeted-repair": [/promo:05-repair$/i, /sf\/step-3\.7-flash$/i, /sf\/step-3\.5-flash-2603$/i, /sf\/step-3\.5-flash$/i],
-  alignment: [/promo:05-repair$/i, /sf\/step-3\.7-flash$/i, /sf\/step-3\.5-flash-2603$/i, /sf\/step-3\.5-flash$/i],
+  // Main docs: prefer alternative stable models first, then promo as fallback
+  // The order below ensures we try stable models before the problematic step models
+  blueprint: [
+    /gpt-4o-mini/i,
+    /claude-3-5-haiku/i,
+    /deepseek-v4-flash/i,
+    /gemini-1\.5-flash/i,
+    /promo:05$/i,
+    /sf\/step-3\.5-flash$/i,
+    /sf\/step-3\.5-flash-2603$/i,
+    /sf\/step-3\.7-flash$/i,
+  ],
+  prd: [
+    /gpt-4o-mini/i,
+    /claude-3-5-haiku/i,
+    /deepseek-v4-flash/i,
+    /gemini-1\.5-flash/i,
+    /promo:05$/i,
+    /sf\/step-3\.5-flash$/i,
+    /sf\/step-3\.5-flash-2603$/i,
+    /sf\/step-3\.7-flash$/i,
+  ],
+  "tech-stack": [
+    /gpt-4o-mini/i,
+    /claude-3-5-haiku/i,
+    /deepseek-v4-flash/i,
+    /gemini-1\.5-flash/i,
+    /promo:05$/i,
+    /sf\/step-3\.5-flash$/i,
+    /sf\/step-3\.5-flash-2603$/i,
+    /sf\/step-3\.7-flash$/i,
+  ],
+  "ui-ux": [
+    /gpt-4o-mini/i,
+    /claude-3-5-haiku/i,
+    /deepseek-v4-flash/i,
+    /gemini-1\.5-flash/i,
+    /promo:05$/i,
+    /sf\/step-3\.5-flash$/i,
+    /sf\/step-3\.5-flash-2603$/i,
+    /sf\/step-3\.7-flash$/i,
+  ],
+  schema: [
+    /gpt-4o-mini/i,
+    /claude-3-5-haiku/i,
+    /deepseek-v4-flash/i,
+    /gemini-1\.5-flash/i,
+    /promo:05$/i,
+    /sf\/step-3\.5-flash$/i,
+    /sf\/step-3\.5-flash-2603$/i,
+    /sf\/step-3\.7-flash$/i,
+  ],
+  revision: [
+    /gpt-4o-mini/i,
+    /claude-3-5-haiku/i,
+    /deepseek-v4-flash/i,
+    /gemini-1\.5-flash/i,
+    /promo:05$/i,
+    /sf\/step-3\.5-flash$/i,
+    /sf\/step-3\.5-flash-2603$/i,
+    /sf\/step-3\.7-flash$/i,
+  ],
+  // Repair/Alignment: same pattern - prefer stable alternatives first
+  "quality-repair": [
+    /gpt-4o-mini/i,
+    /claude-3-5-haiku/i,
+    /deepseek-v4-flash/i,
+    /gemini-1\.5-flash/i,
+    /promo:05-repair$/i,
+    /sf\/step-3\.7-flash$/i,
+    /sf\/step-3\.5-flash-2603$/i,
+    /sf\/step-3\.5-flash$/i,
+  ],
+  "targeted-repair": [
+    /gpt-4o-mini/i,
+    /claude-3-5-haiku/i,
+    /deepseek-v4-flash/i,
+    /gemini-1\.5-flash/i,
+    /promo:05-repair$/i,
+    /sf\/step-3\.7-flash$/i,
+    /sf\/step-3\.5-flash-2603$/i,
+    /sf\/step-3\.5-flash$/i,
+  ],
+  alignment: [
+    /gpt-4o-mini/i,
+    /claude-3-5-haiku/i,
+    /deepseek-v4-flash/i,
+    /gemini-1\.5-flash/i,
+    /promo:05-repair$/i,
+    /sf\/step-3\.7-flash$/i,
+    /sf\/step-3\.5-flash-2603$/i,
+    /sf\/step-3\.5-flash$/i,
+  ],
 };
 
 function getStagePriority(modelId: string, stage: GenerationStage): number {
@@ -230,7 +313,7 @@ export function getModelStageStats(
   return modelStats.get(statsKey(modelId, stage)) ?? null;
 }
 
-// ── Scoring Engine ─────────────────────────────────────────────────────────
+// ── Scoring Engine ────────────────────────────────────────────────────────
 
 /**
  * Calculate a composite score for a model on a given stage.
