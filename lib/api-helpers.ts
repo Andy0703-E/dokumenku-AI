@@ -115,6 +115,10 @@ export type StreamConsumeResult = {
   finishReason: string | null;
 };
 
+/**
+ * Helper to safely consume a provider stream.
+ * Handles ECONNRESET and other connection errors gracefully.
+ */
 export async function consumeProviderStream(
   response: Response,
   _providerKind: string,
@@ -178,6 +182,21 @@ export async function consumeProviderStream(
     if (buffer.trim().startsWith("data:")) consumeData(buffer.trim().slice(5));
 
     return { finishReason: lastFinishReason };
+  } catch (error) {
+    // Handle connection reset and other errors
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    
+    if (errorMessage.includes("ECONNRESET") || errorMessage.includes("ECONNREFUSED")) {
+      console.error(JSON.stringify({
+        level: "error",
+        stage: "consumeProviderStream",
+        provider: providerName,
+        error: errorMessage,
+        message: "Koneksi terputus saat streaming dari provider.",
+      }));
+    }
+    
+    throw error;
   } finally {
     if (timeoutId) clearTimeout(timeoutId);
   }
