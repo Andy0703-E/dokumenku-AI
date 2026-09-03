@@ -272,7 +272,9 @@ Aturan ketat:
 - Selesaikan temuan di atas dengan istilah kontrak yang persis sama.
 - GUNAKAN istilah dari "Istilah WAJIB" di atas. Contoh: jika role kanonis adalah "Admin Desa", jangan menulis "Admin" atau "Kepala Desa".
 - Untuk endpoint API, gunakan prefix yang SAMA di seluruh dokumen (contoh: /api/v1/xxx).
-- Salin persis nama role, status, dan endpoint dari dokumen terkait. Jangan menerjemahkan atau mengubah kapitalisasi.`;
+- Salin persis nama role, status, dan endpoint dari dokumen terkait. Jangan menerjemahkan atau mengubah kapitalisasi.
+- Untuk TECH-STACK.md: arsitektur MVP WAJIB Full-Stack Monolitik (Next.js Route Handlers), bukan Express.js terpisah di EC2. Gunakan layanan Serverless/Managed.
+- Untuk SCHEMA.md: kolom terenkripsi (AES-256) TIDAK BOLEH diberi UNIQUE. Buat kolom <kolom>_hash (HMAC/SHA-256) untuk unique constraint. Hindari relasi 1:1 yang tidak perlu; gabungkan kolom wajib ke tabel utama.`;
 }
 
 /**
@@ -295,6 +297,10 @@ PERBAIKAN QUALITY GATE — instruksi ini wajib dipatuhi:
 - Hapus role, status lifecycle, integrasi, fitur, atau aturan bisnis bernama yang tidak ada di DATA PRODUK ACUAN.
 - Jangan menambah asumsi sebagai keputusan sistem; tandai sebagai **Asumsi** bila benar-benar diperlukan.
 - Kembalikan Markdown lengkap saja, tanpa blok kode pembungkus atau penjelasan. Terapkan STRICT OUTPUT RULE di atas, termasuk H1 tunggal # ${file}.
+
+ATURAN KHUSUS TAMBAHAN:
+- TECH-STACK.md: arsitektur MVP WAJIB Full-Stack Monolitik (Next.js Route Handlers), JANGAN Express.js terpisah di EC2. Gunakan layanan Serverless/Managed (Vercel, Supabase, Neon, Upstash). Hindari daemon berat (ClamAV); gunakan VirusTotal API atau validasi magic number.
+- SCHEMA.md: kolom terenkripsi (AES-256) TIDAK BOLEH diberi UNIQUE. Buat kolom <kolom>_hash (HMAC/SHA-256) untuk unique constraint. Hindari relasi 1:1 yang tidak perlu; gabungkan kolom wajib ke tabel utama.
 
 Temuan yang harus hilang setelah penulisan ulang:
 ${findings.map((finding, index) => `${index + 1}. ${finding}`).join("\n")}
@@ -480,6 +486,7 @@ ${outline}
 - DATA PRODUK ACUAN adalah kontrak yang tidak boleh diubah oleh dokumen ini: jangan memperkenalkan role, status, fitur, integrasi, atau aturan bisnis bernama baru. Jika detail non-kritis belum tercatat di kontrak, tulis sebagai **Asumsi** atau **Open Question**, bukan sebagai keputusan sistem.
 - Hak keputusan final hanya boleh dimiliki oleh role yang dinyatakan sebagai approver final. Role lain dapat menyiapkan data atau rekomendasi, tetapi tidak boleh diberi endpoint maupun izin yang melewati keputusan final.
 - Khusus TECH-STACK.md: Compatibility Check harus memeriksa kecocokan arsitektur, integrasi, deployment, dan skala; Version Policy harus menyatakan cara mengunci/menaikkan versi dependency. Risk-Based Security & Domain Compliance harus berdasarkan risiko domain produk.
+- Khusus TECH-STACK.md: Untuk fase MVP, WAJIB memilih arsitektur Full-Stack Monolitik (misal: Next.js App Router dengan Route Handlers / API Routes). JANGAN pernah menyarankan pemisahan backend ke server terpisah (seperti Express.js di AWS EC2) karena alasan kompleksitas CORS dan deployment. Pilih layanan berbasis Serverless/Managed (Vercel, Supabase, Neon, Upstash) daripada merakit server manual (EC2) untuk fase MVP. Hindari menyarankan software yang membutuhkan proses daemon berat (seperti ClamAV) pada lingkungan serverless; gunakan alternatif API pihak ketiga (misal: VirusTotal API) atau validasi in-memory (magic number check) untuk keamanan file.
 - Khusus TECH-STACK.md: semua endpoint harus memakai prefix API yang sama. Jika identitas sensitif dienkripsi dan perlu unik/dicari, jelaskan ciphertext plus lookup token hash/HMAC yang diindeks unik, bukan UNIQUE pada ciphertext.
 - Khusus UI-UX.md: kedua bagian Textual Wireframe harus menulis tata letak layar dalam teks/ASCII yang jelas untuk Desktop dan Mobile, termasuk state penting.
 - Khusus SCHEMA.md: sertakan satu blok Mermaid dengan kata awal \`erDiagram\`, tabel lengkap, serta constraint eksplisit (misalnya PK, FK, UNIQUE, CHECK, NOT NULL) untuk entitas yang relevan. Jangan menggabungkan atau menghilangkan heading **Relasi**, **Constraint**, **Index**, **Lifecycle**, **Audit**, dan **Retention**; masing-masing harus memiliki penjelasan sendiri, termasuk bila hanya berisi asumsi atau kebijakan. Keputusan bisnis yang dapat terjadi berkali-kali dalam satu proses harus memiliki relasi/FK ke record yang diputuskan.
@@ -487,6 +494,7 @@ ${outline}
 - Khusus TECH-STACK.md: tetapkan SATU rancangan autentikasi kanonis. Untuk Login/Register, pilih Credentials dengan password_hash yang kuat (misalnya Argon2id) ATAU Auth.js dengan adapter tabel accounts/sessions yang lengkap; jangan menyebut Auth.js tanpa menjelaskan strategi yang dipilih. Jangan memperlakukan cookie sesi, access JWT, dan refresh token sebagai mekanisme yang saling menggantikan. Bila token/sesi perlu disimpan, jelaskan penyimpanan hash, kedaluwarsa, dan pencabutan; jangan menaruh bearer token pada URL stream. Untuk EventSource/SSE di browser, gunakan cookie sesi HttpOnly atau mekanisme yang benar-benar bisa dikirim browser; EventSource tidak dapat mengirim header Authorization kustom.
 - Khusus TECH-STACK.md: bila PRD memerlukan search conversation, tentukan strategi database yang konkret (misalnya PostgreSQL full-text atau pg_trgm) dan indeks yang dibutuhkan untuk title serta content. Untuk setiap alur streaming, pilih transport yang jelas dan konsisten (misalnya SSE atau WebSocket), otorisasi sebelum stream dibuka, serta jelaskan reconnect/cursor atau idempotensi bila relevan. Retry otomatis hanya boleh sebelum token pertama; untuk HTTP 429 patuhi Retry-After; jangan memulai request AI kedua setelah output parsial diterima. Bedakan first-token timeout, stream idle timeout, dan total generation timeout.
 - Khusus SCHEMA.md: struktur auth harus mengikuti TECH-STACK.md. Jika sesi atau refresh token dipersistenkan, simpan hanya hash/token lookup yang aman beserta expiry, revocation, dan audit; jangan simpan bearer/access token mentah. Jika auth stateless tanpa penyimpanan sesi, jangan mendefinisikan tabel sesi sebagai mekanisme autentikasi aktif. Foreign key dengan ON DELETE SET NULL harus menunjuk kolom nullable; gunakan RESTRICT/CASCADE bila kolom wajib NOT NULL. Setiap relasi ERD harus didukung FK atau junction table; jangan tulis self-reference N:M tanpa relasi nyata. Hindari boolean yang menduplikasi enum status kecuali perannya berbeda secara eksplisit.
+- Khusus SCHEMA.md: Hindari relasi 1:1 yang tidak perlu. Jika entitas B hanya ada jika entitas A ada dan bersifat wajib (contoh: Rating pada Ulasan), GABUNGKAN kolom tersebut ke dalam tabel utama (ulasan) untuk menghemat JOIN query. Aturan Enkripsi vs Constraint: Jika sebuah kolom data sensitif (seperti email/NIK) dienkripsi menggunakan AES-256, JANGAN berikan constraint UNIQUE pada kolom terenkripsi tersebut. WAJIB menambahkan kolom kedua bernama <kolom>_hash (misal: email_hash) dengan tipe VARCHAR/CHAR yang diisi oleh hash HMAC-SHA256 atau SHA-256, dan berikan constraint UNIQUE pada kolom _hash tersebut.
 - Jangan menulis pembuka percakapan, penutup, blok kode pembungkus, atau marker seperti <<<FILE:...>>>.
 
 ${readOnlyContext}`;

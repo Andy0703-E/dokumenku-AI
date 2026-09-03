@@ -38,7 +38,7 @@ function documents(overrides: Partial<Record<"PRD.md" | "TECH-STACK.md" | "UI-UX
   };
 }
 
-test("V2.1 detects the six semantic repair conditions", async () => {
+test("V2.1 detects the seven semantic repair conditions", async () => {
   const { documentsNeedingQualityFix, validateBlueprintConsistency } = await qualityModule();
   const report = validateBlueprintConsistency(blueprint, documents({
     "PRD.md": "Kepala Desa menetapkan penerima. Flag Perlu Verifikasi digunakan untuk peninjauan. Kontrak kanonis minimum dipakai.",
@@ -53,8 +53,9 @@ test("V2.1 detects the six semantic repair conditions", async () => {
     "permission-conflict",
     "relationship-integrity",
     "security-feasibility",
+    "schema-encryption-unique-conflict",
   ]);
-  assert.equal(report.repairs.length, 6);
+  assert.equal(report.repairs.length, 7);
   assert.deepEqual(documentsNeedingQualityFix(report), ["PRD.md", "TECH-STACK.md", "UI-UX.md", "SCHEMA.md"]);
 });
 

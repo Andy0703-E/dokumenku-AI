@@ -134,6 +134,9 @@ const USER_FACING_NOTE_COPY: Record<string, { title: string; description: string
   "redundant-state-modeling": { title: "Status data perlu disederhanakan", description: "Satu status bisnis sebaiknya tidak disimpan dalam dua field yang artinya sama." },
   "erd-relationship-integrity": { title: "Relasi ERD perlu diperbaiki", description: "Kardinalitas ERD harus sesuai dengan foreign key dan entitas yang nyata." },
   "document-output-isolation": { title: "Dokumen tercampur", description: "Setiap file harus memiliki satu judul dokumen yang tepat dan tidak boleh memuat judul dokumen lain." },
+  "tech-stack-mvp-overengineering": { title: "Arsitektur MVP over-engineered", description: "Untuk fase MVP, arsitektur harus Full-Stack Monolitik (Next.js Route Handlers) tanpa pemisahan backend ke server terpisah." },
+  "schema-encryption-unique-conflict": { title: "Konflik enkripsi & unique constraint", description: "Kolom terenkripsi tidak bisa diberi UNIQUE. Buat kolom _hash (HMAC/SHA-256) untuk kebutuhan unique constraint." },
+  "schema-redundant-one-to-one": { title: "Relasi 1:1 redundan", description: "Pertimbangkan menggabungkan tabel kecil yang relasi 1:1 wajib ke tabel utama." },
 };
 
 function asRecord(value: unknown): Record<string, unknown> | null {
@@ -1623,6 +1626,122 @@ export function applyDeterministicFastFixes(
   };
 }
 
+function findTechStackMvpOverengineeringIssue(files: GeneratedFiles): SemanticIssue | null {
+  const tech = files["TECH-STACK.md"];
+  const techLower = tech.toLocaleLowerCase("id-ID");
+  const issues: string[] = [];
+  const affected = new Set<FileName>();
+
+  // Check for backend separation to Express.js or separate server
+  const mentionsExpressBackend = /(?:backend|server|api)[\s\S]{0,80}(?:express\.?js|express\s+server|express\s+app)/i.test(tech)
+    || /express\.?js[\s\S]{0,80}(?:backend|server|api)/i.test(tech);
+  if (mentionsExpressBackend) {
+    issues.push("Backend MVP menggunakan Express.js terpisah; gunakan Next.js Route Handlers untuk arsitektur monolitik");
+    affected.add("TECH-STACK.md");
+  }
+
+  // Check for AWS EC2 or manual server provisioning
+  const mentionsEC2 = /\b(?:aws\s+)?ec2\b/i.test(techLower) || /\b(?:ec2|virtual\s+private\s+server|vps|dedicated\s+server)\b/i.test(techLower);
+  const mentionsEC2AsBackend = mentionsEC2 && /(?:backend|server|api|deploy|hosting)[\s\S]{0,120}\b(?:ec2|vps)\b|\b(?:ec2|vps)\b[\s\S]{0,120}(?:backend|server|api|deploy)/i.test(tech);
+  if (mentionsEC2AsBackend) {
+    issues.push("Backend MVP di-deploy ke EC2/VPS manual; gunakan layanan Serverless/Managed (Vercel, Supabase, Neon, Upstash)");
+    affected.add("TECH-STACK.md");
+  }
+
+  // Check for heavy daemon software on serverless
+  const mentionsDaemon = /\b(?:clamav|clamscan|clamd|antivirus\s+daemon|malware\s+scanner\s+daemon)\b/i.test(techLower);
+  if (mentionsDaemon) {
+    issues.push("Menggunakan software daemon berat (ClamAV) yang tidak kompatibel dengan lingkungan serverless; gunakan VirusTotal API atau validasi magic number");
+    affected.add("TECH-STACK.md");
+  }
+
+  if (!issues.length) return null;
+  const filesAffected = uniqueFiles(affected);
+  return {
+    files: filesAffected,
+    detail: `Arsitektur MVP over-engineered: ${issues.join("; ")}. Dokumen terdampak: ${issueFilesDetail(filesAffected)}.`,
+  };
+}
+
+function findSchemaEncryptionUniqueConflictIssue(files: GeneratedFiles): SemanticIssue | null {
+  const schema = files["SCHEMA.md"];
+  const issues: string[] = [];
+  const affected = new Set<FileName>();
+
+  // Find all columns with UNIQUE constraint
+  const uniqueColumns = [...schema.matchAll(/\b(?:UNIQUE|UNIQUE\s+KEY)\s*\(\s*`?([a-z][a-z0-9_]*)`?\s*\)/gi)]
+    .map((m) => m[1].toLowerCase());
+  // Also check inline UNIQUE constraint on column definitions
+  const inlineUniqueColumns = [...schema.matchAll(/\b([a-z][a-z0-9_]*)\b[^.\n]{0,60}\bUNIQUE\b/gi)]
+    .map((m) => m[1].toLowerCase());
+
+  const allUniqueColumns = [...new Set([...uniqueColumns, ...inlineUniqueColumns])];
+
+  // Check if any UNIQUE column is also encrypted (AES, encrypt, ciphertext)
+  // Only match encryption terms in the SAME column definition (before the next column/period)
+  for (const col of allUniqueColumns) {
+    const colDefPattern = new RegExp(`\\b${escapeRegExp(col)}\\b[^.\\n]{0,120}`, "i");
+    const colDef = colDefPattern.exec(schema)?.[0] || "";
+    const isEncrypted = /(?:encrypt|aes[-\s]?256|ciphertext|terenkripsi)/i.test(colDef);
+    if (isEncrypted) {
+      // Check if there's a corresponding _hash column
+      const hashCol = `${col}_hash`;
+      const hasHashCol = new RegExp(`\\b${escapeRegExp(hashCol)}\\b`, "i").test(schema);
+      if (!hasHashCol) {
+        issues.push(`Kolom "${col}" dienkripsi tapi diberi UNIQUE tanpa kolom ${hashCol}; buat ${hashCol} (HMAC/SHA-256) untuk unique constraint`);
+        affected.add("SCHEMA.md");
+      }
+    }
+  }
+
+  if (!issues.length) return null;
+  const filesAffected = uniqueFiles(affected);
+  return {
+    files: filesAffected,
+    detail: `Konflik enkripsi & unique constraint: ${issues.join("; ")}. Dokumen terdampak: ${issueFilesDetail(filesAffected)}.`,
+  };
+}
+
+function findSchemaRedundantOneToOneIssue(files: GeneratedFiles): SemanticIssue | null {
+  const schema = files["SCHEMA.md"];
+
+  // Extract table definitions (both markdown headings and CREATE TABLE)
+  const tableDefs = extractSchemaTablesAndColumns(schema);
+  if (tableDefs.size < 2) return null;
+
+  const issues: string[] = [];
+
+  // Check for 1:1 relationships in ERD
+  const oneToOneRelations = [...schema.matchAll(/\b([a-z][a-z0-9_]*)\b[^|\n]{0,40}\|\|[\s\S]{0,20}\|\|\b([a-z][a-z0-9_]*)\b/gi)];
+
+  for (const match of oneToOneRelations) {
+    const tableA = match[1].toLowerCase();
+    const tableB = match[2].toLowerCase();
+
+    const colsA = tableDefs.get(tableA);
+    const colsB = tableDefs.get(tableB);
+
+    // If table B has only 1-3 columns (besides id and foreign keys), it's likely redundant
+    if (colsB && colsB.size <= 5) {
+      const nonIdFkCols = [...colsB].filter((c) => c !== "id" && !c.endsWith("_id") && !c.endsWith("_fk"));
+      if (nonIdFkCols.length <= 3) {
+        // Check if table B is mandatory (has NOT NULL on all non-id columns or is described as required)
+        const tableBSection = new RegExp(`(?:^#{2,6}\\s*(?:tabel\\s*[:—-]?\\s*)?${escapeRegExp(tableB)}\\b[\\s\\S]{0,800}?(?:\\n#{2,6}|$))`, "im").exec(schema);
+        const isRequired = tableBSection && /\b(?:wajib|required|mandatory|obligatory)\b/i.test(tableBSection[0]);
+        if (isRequired || nonIdFkCols.length <= 2) {
+          issues.push(`Relasi 1:1 redundan antara "${tableA}" dan "${tableB}"; tabel "${tableB}" hanya memiliki ${nonIdFkCols.length} kolom data yang bisa digabung ke "${tableA}"`);
+        }
+      }
+    }
+  }
+
+  if (!issues.length) return null;
+  return {
+    files: ["SCHEMA.md"],
+    detail: `Relasi 1:1 redundan terdeteksi: ${issues.join("; ")}. Pertimbangkan untuk menggabungkan tabel kecil ke tabel utama.`,
+  };
+}
+
 function addRepairCheck(checks: QualityCheck[], id: string, label: string, issue: SemanticIssue | null, successDetail: string) {
   addCheck(checks, id, label, issue ? "repair" : "passed", issue?.detail || successDetail);
 }
@@ -1913,6 +2032,27 @@ export function validateBlueprintConsistency(
     "Kardinalitas ERD valid",
     findErdRelationshipIntegrityIssue(files),
     "Kardinalitas ERD didukung foreign key atau tabel penghubung yang nyata.",
+  );
+  addRepairCheck(
+    checks,
+    "tech-stack-mvp-overengineering",
+    "Arsitektur MVP tidak over-engineered",
+    findTechStackMvpOverengineeringIssue(files),
+    "Arsitektur MVP menggunakan Full-Stack Monolitik (Next.js Route Handlers) tanpa pemisahan backend.",
+  );
+  addRepairCheck(
+    checks,
+    "schema-encryption-unique-conflict",
+    "Tidak ada konflik enkripsi & UNIQUE",
+    findSchemaEncryptionUniqueConflictIssue(files),
+    "Kolom terenkripsi menggunakan _hash (HMAC/SHA-256) untuk UNIQUE constraint.",
+  );
+  addWarningCheck(
+    checks,
+    "schema-redundant-one-to-one",
+    "Tidak ada relasi 1:1 redundan",
+    findSchemaRedundantOneToOneIssue(files),
+    "Relasi 1:1 hanya digunakan ketika entitas benar-benar terpisah dan kompleks.",
   );
 
   const failures = checks.filter((check) => check.status === "failed").map((check) => check.detail);
