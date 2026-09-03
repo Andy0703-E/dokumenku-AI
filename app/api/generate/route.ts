@@ -15,9 +15,9 @@ import {
   getAdminRoutingOverrides,
 } from "@/lib/model-router";
 
-const MAX_AUTO_FALLBACK_ATTEMPTS = 3;
+const MAX_AUTO_FALLBACK_ATTEMPTS = 6;
 const MAX_OUTPUT_TOKENS = 24_000;
-const UPSTREAM_CONNECT_TIMEOUT_MS = 10_000; // 10 second initial connection timeout
+const UPSTREAM_CONNECT_TIMEOUT_MS = 10_000;
 
 // ── In-memory rate limiter (sliding window per user) ────────────────
 const RATE_LIMIT_MAX_CONCURRENT = 3;
@@ -471,13 +471,41 @@ export async function POST(request: NextRequest) {
         );
       }
 
+      // ── Map promo model IDs based on stage ──────────────────────────────
+      // promo:05 → sf/step-3.5-flash (Tier 1)
+      // promo:05-repair → sf/step-3.7-flash (Tier 1)
+      // The virtual combo is resolved to its cheapest concrete model first.
+      // When that attempt times out (>10s) or fails, the loop escalates to
+      // Tier 2 (glm-5.3-flash) then Tier 3 (minimax-m3).
+      const REPAIR_STAGES = ["quality-repair", "targeted-repair", "alignment"] as const;
+      const isRepairStage = REPAIR_STAGES.includes(resolvedStage as typeof REPAIR_STAGES[number]);
+
+      function mapPromoModel(modelId: string): string {
+        if (modelId === "promo:05") {
+          return isRepairStage ? "sf/step-3.7-flash" : "sf/step-3.5-flash";
+        }
+        if (modelId === "promo:05-repair") {
+          return isRepairStage ? "sf/step-3.7-flash" : "sf/step-3.5-flash";
+        }
+        return modelId;
+      }
+
+      // Apply mapping and de-duplicate to avoid calling the same model twice.
+      const seenModels = new Set<string>();
+      const mappedChain = fallbackChain
+        .map((c) => ({ ...c, modelId: mapPromoModel(c.modelId) }))
+        .filter((c) => {
+          if (seenModels.has(c.modelId)) return false;
+          seenModels.add(c.modelId);
+          return true;
+        });
+
       // Attempt with fallback chain
-      // (No longer mapping promo models - they have been removed)
       let lastError = "";
       let lastStatus = 500;
 
-      for (let attemptIndex = 0; attemptIndex < Math.min(fallbackChain.length, MAX_AUTO_FALLBACK_ATTEMPTS); attemptIndex++) {
-        const candidate = fallbackChain[attemptIndex];
+      for (let attemptIndex = 0; attemptIndex < Math.min(mappedChain.length, MAX_AUTO_FALLBACK_ATTEMPTS); attemptIndex++) {
+        const candidate = mappedChain[attemptIndex];
         const attemptStart = Date.now();
 
         // Create attempt row BEFORE provider call (server-authoritative)

@@ -24,23 +24,26 @@ export type ProviderModelMetadata = {
 // Models that work via the API but don't appear in the models list.
 // Used as aliases or internal promotional models.
 //
-// ⚠️ NOTE: promo:05 and promo:05-repair have been REMOVED because they route
-// to sf/step-3.5-flash and sf/step-3.7-flash, which experience chronic timeouts.
-// The system now relies on direct model selection or provider-exposed models.
+// ⚠️ Virtual combo models: promo:05 maps to sf/step-3.5-flash (main docs),
+// promo:05-repair maps to sf/step-3.7-flash (repair/alignment).
+// The gateway handles routing within the internal chain (3.5 → 3.5-2603 → 3.7).
+// When a tier times out (>10s), the fallback escalates to Tier 2 (glm-5.3-flash)
+// then Tier 3 (minimax-m3) automatically.
 export const HARDCODED_MODELS: Array<{ id: string; name: string; tier: ModelTier; tokenMultiplier?: number }> = [
-  // Removed: promo:05 and promo:05-repair (timeout-prone)
-  // { id: "promo:05", name: "Promo 0,5 (3.5→3.5-2603→3.7)", tier: "starter", tokenMultiplier: 0.5 },
-  // { id: "promo:05-repair", name: "Promo 0,5 Repair (3.7→3.5-2603→3.5)", tier: "starter", tokenMultiplier: 0.5 },
-  
+  // ── Tier 1: Virtual combo models (internal step-flash chain) ──
+  { id: "promo:05", name: "Promo 0,5 (3.5→3.5-2603→3.7)", tier: "starter", tokenMultiplier: 0.5 },
+  { id: "promo:05-repair", name: "Promo 0,5 Repair (3.7→3.5-2603→3.5)", tier: "starter", tokenMultiplier: 0.5 },
+  { id: "sf/step-3.5-flash", name: "Step 3.5 Flash", tier: "starter", tokenMultiplier: 0.5 },
+  { id: "sf/step-3.5-flash-2603", name: "Step 3.5 Flash 2603", tier: "starter", tokenMultiplier: 0.5 },
+  { id: "sf/step-3.7-flash", name: "Step 3.7 Flash", tier: "starter", tokenMultiplier: 0.5 },
+
   { id: "auto:free", name: "Auto Free Model", tier: "starter", tokenMultiplier: 0 },
-  
-  // Removed: Individual step-flash models (timeout-prone)
-  // { id: "sf/step-3.5-flash", name: "Step 3.5 Flash", tier: "starter", tokenMultiplier: 0.5 },
-  // { id: "sf/step-3.5-flash-2603", name: "Step 3.5 Flash 2603", tier: "starter", tokenMultiplier: 0.5 },
-  // { id: "sf/step-3.7-flash", name: "Step 3.7 Flash", tier: "starter", tokenMultiplier: 0.5 },
-  //
-  // These models are now retrieved from provider's /models endpoint or admin panel
-  // and will be prioritized based on availability and performance stats.
+
+  // ── Tier 2: Stable free models (glm-5.3-flash) ──
+  { id: "glm-5.3-flash", name: "GLM 5.3 Flash", tier: "starter" },
+
+  // ── Tier 3: Ultra-last-resort (minimax-m3) ──
+  { id: "minimax-m3:free", name: "MiniMax M3 Free", tier: "starter" },
 ];
 
 const FLAGSHIP_PATTERNS = [
