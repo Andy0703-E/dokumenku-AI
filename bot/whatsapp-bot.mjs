@@ -5,7 +5,7 @@ import QRCode from "qrcode";
 import http from "node:http";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { DatabaseSync } from "node:sqlite";
+import { createClient } from "@libsql/client";
 import { createHmac, timingSafeEqual } from "node:crypto";
 
 const __filename = fileURLToPath(import.meta.url);
@@ -18,9 +18,11 @@ try {
   // .env.local optional
 }
 
-// Database path
-const dbPath = path.resolve(__dirname, "..", "data", "dokumenku.sqlite");
-const db = new DatabaseSync(dbPath);
+// Connect to Turso (single source of truth)
+const db = createClient({
+  url: process.env.TURSO_DATABASE_URL,
+  authToken: process.env.TURSO_AUTH_TOKEN || undefined,
+});
 
 // Normalize phone number (converts 08... or +62... to 62...)
 function normalizePhoneNumber(raw) {
@@ -81,7 +83,7 @@ function buildCanonicalAuditPayload(params) {
   });
 }
 
-function insertAuditLogEntry(database, params) {
+async function insertAuditLogEntry(params) {
   const now = params.createdAt || new Date().toISOString();
   const amount = params.amount || 0;
   const creditsGranted = params.creditsGranted || 0;
@@ -92,12 +94,13 @@ function insertAuditLogEntry(database, params) {
   const notes = params.notes || "";
   const keyVersion = 1;
 
-  const lastEntry = database
-    .prepare("SELECT sequence, entry_hash FROM audit_logs ORDER BY id DESC LIMIT 1")
-    .get();
+  const lastEntryResult = await db.execute(
+    "SELECT sequence, entry_hash FROM audit_logs ORDER BY id DESC LIMIT 1"
+  );
+  const lastEntry = lastEntryResult.rows[0];
 
-  const sequence = (lastEntry?.sequence || 0) + 1;
-  const previousHash = lastEntry?.entry_hash || "GENESIS_BLOCK_DOKUMENKU_AI_2026";
+  const sequence = (Number(lastEntry?.sequence) || 0) + 1;
+  const previousHash = String(lastEntry?.entry_hash || "GENESIS_BLOCK_DOKUMENKU_AI_2026");
 
   const canonicalPayload = buildCanonicalAuditPayload({
     sequence,
@@ -120,30 +123,31 @@ function insertAuditLogEntry(database, params) {
     .update(canonicalPayload)
     .digest("hex");
 
-  database.prepare(`
-    INSERT INTO audit_logs (
+  await db.execute({
+    sql: `INSERT INTO audit_logs (
       sequence, key_version,
-      order_id, action, actor_email, provider, transaction_id, 
-      amount, credits_granted, status_before, status_after, notes, 
+      order_id, action, actor_email, provider, transaction_id,
+      amount, credits_granted, status_before, status_after, notes,
       previous_hash, entry_hash, created_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-  `).run(
-    sequence,
-    keyVersion,
-    params.orderId,
-    params.action,
-    params.actorEmail,
-    provider,
-    transactionId,
-    amount,
-    creditsGranted,
-    statusBefore,
-    statusAfter,
-    notes,
-    previousHash,
-    entryHash,
-    now,
-  );
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    args: [
+      sequence,
+      keyVersion,
+      params.orderId,
+      params.action,
+      params.actorEmail,
+      provider,
+      transactionId,
+      amount,
+      creditsGranted,
+      statusBefore,
+      statusAfter,
+      notes,
+      previousHash,
+      entryHash,
+      now,
+    ],
+  });
 
   return entryHash;
 }
@@ -236,232 +240,158 @@ function extractInvoiceId(text) {
 }
 
 // Helper: Approve Order and Credit User (Strict Atomic Transaction)
-function approveInvoice(identifier) {
+async function approveInvoice(identifier) {
   const now = new Date().toISOString();
   const tokenHash = hashApprovalToken(identifier);
 
   try {
-    db.exec("BEGIN IMMEDIATE");
-
-    const order = db
-      .prepare(
-        "SELECT * FROM orders WHERE UPPER(id) = UPPER(?) OR (approval_token_hash IS NOT NULL AND approval_token_hash = ?)",
-      )
-      .get(identifier, tokenHash);
-
-    if (!order) {
-      db.exec("ROLLBACK");
-      insertAuditLogEntry(db, {
-        orderId: identifier,
-        action: "PAYMENT_APPROVAL_DENIED",
-        actorEmail: `whatsapp:${ADMIN_PHONE}`,
-        provider: "QRIS",
-        transactionId: "N/A",
-        amount: 0,
-        creditsGranted: 0,
-        statusBefore: "NOT_FOUND",
-        statusAfter: "NOT_FOUND",
-        notes: "Tagihan dengan ID/Token tidak ditemukan via WA.",
-        createdAt: now,
+    const result = await db.transaction(async (tx) => {
+      const orderResult = await tx.execute({
+        sql: "SELECT * FROM orders WHERE UPPER(id) = UPPER(?) OR (approval_token_hash IS NOT NULL AND approval_token_hash = ?)",
+        args: [identifier, tokenHash],
       });
-      return { ok: false, error: `Tagihan/Token '${identifier}' tidak ditemukan di database.` };
-    }
+      const order = orderResult.rows[0];
 
-    // Check token expiry & attempts if matched by token
-    const isTokenMatch = order.approval_token_hash && safeCompare(order.approval_token_hash, tokenHash);
-    if (isTokenMatch) {
-      if (order.approval_token_expires_at && new Date(order.approval_token_expires_at).getTime() < Date.now()) {
-        db.exec("ROLLBACK");
-        insertAuditLogEntry(db, {
-          orderId: order.id,
-          action: "PAYMENT_APPROVAL_DENIED",
-          actorEmail: `whatsapp:${ADMIN_PHONE}`,
-          provider: order.payment_method || "QRIS",
-          transactionId: order.ocr_transaction_id || "N/A",
-          amount: order.amount,
-          creditsGranted: 0,
-          statusBefore: order.status,
-          statusAfter: order.status,
-          notes: "TOKEN_EXPIRED via WA: Token approval telah kedaluwarsa (berlaku 10 menit).",
-          createdAt: now,
-        });
-        return { ok: false, error: "TOKEN_EXPIRED: Token approval telah kedaluwarsa (10 menit)." };
+      if (!order) {
+        return { ok: false, error: `Tagihan/Token '${identifier}' tidak ditemukan di database.` };
       }
 
-      if ((order.approval_token_attempts || 0) >= 5) {
-        db.exec("ROLLBACK");
-        db.prepare("UPDATE orders SET approval_token_hash = NULL WHERE id = ?").run(order.id);
-        insertAuditLogEntry(db, {
-          orderId: order.id,
-          action: "PAYMENT_APPROVAL_DENIED",
-          actorEmail: `whatsapp:${ADMIN_PHONE}`,
-          provider: order.payment_method || "QRIS",
-          transactionId: order.ocr_transaction_id || "N/A",
-          amount: order.amount,
-          creditsGranted: 0,
-          statusBefore: order.status,
-          statusAfter: order.status,
-          notes: "TOKEN_LOCKED via WA: Token terkunci karena melebihi batas percobaan (5x).",
-          createdAt: now,
-        });
-        return { ok: false, error: "TOKEN_LOCKED: Token terkunci karena melebihi batas percobaan (5x)." };
-      }
-    }
+      // Check token expiry & attempts if matched by token
+      const isTokenMatch = order.approval_token_hash && safeCompare(String(order.approval_token_hash), tokenHash);
+      if (isTokenMatch) {
+        if (order.approval_token_expires_at && new Date(String(order.approval_token_expires_at)).getTime() < Date.now()) {
+          return { ok: false, error: "TOKEN_EXPIRED: Token approval telah kedaluwarsa (10 menit)." };
+        }
 
-    if (order.status !== "PENDING_REVIEW") {
-      db.exec("ROLLBACK");
-      insertAuditLogEntry(db, {
-        orderId: order.id,
-        action: "PAYMENT_APPROVAL_DENIED",
-        actorEmail: `whatsapp:${ADMIN_PHONE}`,
-        provider: order.payment_method || "QRIS",
-        transactionId: order.ocr_transaction_id || "N/A",
-        amount: order.amount,
-        creditsGranted: 0,
-        statusBefore: order.status,
-        statusAfter: order.status,
-        notes: `INVALID_PAYMENT_STATE via WA: Percobaan approval ditolak karena status saat ini '${order.status}' (bukan PENDING_REVIEW).`,
-        createdAt: now,
+        if ((Number(order.approval_token_attempts) || 0) >= 5) {
+          await tx.execute({ sql: "UPDATE orders SET approval_token_hash = NULL WHERE id = ?", args: [order.id] });
+          return { ok: false, error: "TOKEN_LOCKED: Token terkunci karena melebihi batas percobaan (5x)." };
+        }
+      }
+
+      if (order.status !== "PENDING_REVIEW") {
+        if (order.status === "PAID" || order.status === "paid") {
+          return { ok: false, error: `Tagihan '${order.id}' sudah berstatus LUNAS (PAID) sebelumnya (ALREADY_PROCESSED).` };
+        }
+        return { ok: false, error: `Tagihan '${order.id}' tidak dapat disetujui karena berstatus '${order.status}'. Hanya tagihan PENDING_REVIEW yang dapat disetujui.` };
+      }
+
+      const provider = String(order.payment_method || "QRIS");
+      const externalTrxId = String(order.ocr_transaction_id || `WA-ACC-${order.id}-${Date.now()}`);
+
+      // 1. Guard against duplicate external transaction IDs
+      if (externalTrxId && !externalTrxId.startsWith("WA-ACC-")) {
+        const existingTrxResult = await tx.execute({
+          sql: "SELECT order_id FROM verified_transactions WHERE provider = ? AND transaction_id = ?",
+          args: [provider, externalTrxId],
+        });
+        const existingTrx = existingTrxResult.rows[0];
+
+        if (existingTrx && existingTrx.order_id !== order.id) {
+          return {
+            ok: false,
+            error: `ID Transaksi ${externalTrxId} sudah pernah digunakan pada invoice ${existingTrx.order_id}.`,
+          };
+        }
+      }
+
+      // 2. Lock & Update order status to PAID
+      const updateOrderRes = await tx.execute({
+        sql: `UPDATE orders
+          SET status = 'PAID',
+              ai_status = 'approved_by_admin',
+              ai_analysis = 'Disetujui langsung oleh Admin via WhatsApp (ACC)',
+              approval_token = NULL,
+              approval_token_hash = NULL,
+              paid_at = ?
+          WHERE id = ? AND status = 'PENDING_REVIEW'`,
+        args: [now, String(order.id)],
       });
 
-      if (order.status === "PAID" || order.status === "paid") {
-        return { ok: false, error: `Tagihan '${order.id}' sudah berstatus LUNAS (PAID) sebelumnya (ALREADY_PROCESSED).` };
+      if (updateOrderRes.rowsAffected !== 1) {
+        return { ok: false, error: "Konflik transaksi: Tagihan telah diubah oleh proses lain." };
       }
-      return { ok: false, error: `Tagihan '${order.id}' tidak dapat disetujui karena berstatus '${order.status}'. Hanya tagihan PENDING_REVIEW yang dapat disetujui.` };
-    }
 
-    const provider = order.payment_method || "QRIS";
-    const externalTrxId = order.ocr_transaction_id || `WA-ACC-${order.id}-${Date.now()}`;
-
-    // 1. Guard against duplicate external transaction IDs
-    if (externalTrxId && !externalTrxId.startsWith("WA-ACC-")) {
-      const existingTrx = db
-        .prepare("SELECT order_id FROM verified_transactions WHERE provider = ? AND transaction_id = ?")
-        .get(provider, externalTrxId);
-
-      if (existingTrx && existingTrx.order_id !== order.id) {
-        db.exec("ROLLBACK");
-        insertAuditLogEntry(db, {
-          orderId: order.id,
-          action: "PAYMENT_APPROVAL_DENIED",
-          actorEmail: `whatsapp:${ADMIN_PHONE}`,
-          provider,
-          transactionId: externalTrxId,
-          amount: order.amount,
-          creditsGranted: 0,
-          statusBefore: order.status,
-          statusAfter: order.status,
-          notes: `DUPLICATE_TRANSACTION via WA: ID Transaksi ${externalTrxId} sudah pernah digunakan pada invoice ${existingTrx.order_id}.`,
-          createdAt: now,
+      // 3. Record verified transaction unique record
+      try {
+        await tx.execute({
+          sql: `INSERT INTO verified_transactions (provider, transaction_id, order_id, amount, user_email, verified_by, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?)`,
+          args: [provider, externalTrxId, String(order.id), Number(order.amount), String(order.user_email), `whatsapp:${ADMIN_PHONE}`, now],
         });
+      } catch {
         return {
           ok: false,
-          error: `ID Transaksi ${externalTrxId} sudah pernah digunakan pada invoice ${existingTrx.order_id}.`,
+          error: `ID Transaksi ${externalTrxId} terdeteksi duplikat pada level database constraint (verified_transactions).`,
         };
       }
-    }
 
-    // 2. Lock & Update order status to PAID (STRICT: WHERE status = 'PENDING_REVIEW')
-    const updateOrderRes = db
-      .prepare(`
-        UPDATE orders 
-        SET status = 'PAID', 
-            ai_status = 'approved_by_admin',
-            ai_analysis = 'Disetujui langsung oleh Admin via WhatsApp (ACC)',
-            approval_token = NULL,
-            approval_token_hash = NULL,
-            paid_at = ?
-        WHERE id = ? AND status = 'PENDING_REVIEW'
-      `)
-      .run(now, order.id);
+      // 4. Add credits to user
+      const creditBonus = Number(order.credits) || 100;
+      const updateRes = await tx.execute({
+        sql: "UPDATE users SET credits = credits + ?, updated_at = ? WHERE email = ?",
+        args: [creditBonus, now, String(order.user_email)],
+      });
 
-    if (updateOrderRes.changes !== 1) {
-      db.exec("ROLLBACK");
-      return { ok: false, error: "Konflik transaksi: Tagihan telah diubah oleh proses lain." };
-    }
+      if (updateRes.rowsAffected !== 1) {
+        await tx.execute({
+          sql: "INSERT INTO users (email, password_hash, password_salt, credits, created_at, updated_at) VALUES (?, 'oauth', 'oauth', ?, ?, ?)",
+          args: [String(order.user_email), creditBonus, now, now],
+        });
+      }
 
-    // 3. Record verified transaction unique record
-    try {
-      db.prepare(`
-        INSERT INTO verified_transactions (provider, transaction_id, order_id, amount, user_email, verified_by, created_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?)
-      `).run(provider, externalTrxId, order.id, order.amount, order.user_email, `whatsapp:${ADMIN_PHONE}`, now);
-    } catch {
-      db.exec("ROLLBACK");
-      return {
-        ok: false,
-        error: `ID Transaksi ${externalTrxId} terdeteksi duplikat pada level database constraint (verified_transactions).`,
-      };
-    }
+      // 5. Insert credit ledger entry (UNIQUE(order_id, type))
+      try {
+        await tx.execute({
+          sql: `INSERT INTO credit_transactions (user_email, amount, reason, order_id, type, created_at)
+            VALUES (?, ?, ?, ?, 'PAYMENT_PURCHASE', ?)`,
+          args: [
+            String(order.user_email),
+            creditBonus,
+            `Pembelian ${order.plan_name} (${order.id}) • ACC via WhatsApp Admin`,
+            String(order.id),
+            now,
+          ],
+        });
+      } catch {
+        return {
+          ok: false,
+          error: `Invoice ${order.id} sudah pernah memberikan kredit sebelumnya (double-grant prevented).`,
+        };
+      }
 
-    // 4. Add credits to user
-    const creditBonus = order.credits || 100;
-    const updateRes = db
-      .prepare("UPDATE users SET credits = credits + ?, updated_at = ? WHERE email = ?")
-      .run(creditBonus, now, order.user_email);
+      // 6. Insert tamper-evident HMAC-SHA256 audit log
+      await insertAuditLogEntry({
+        orderId: String(order.id),
+        action: "PAYMENT_APPROVED",
+        actorEmail: `whatsapp:${ADMIN_PHONE}`,
+        provider,
+        transactionId: externalTrxId,
+        amount: Number(order.amount),
+        creditsGranted: creditBonus,
+        statusBefore: "PENDING_REVIEW",
+        statusAfter: "PAID",
+        notes: `Approval via WhatsApp chat 'ACC' dari Admin (${ADMIN_PHONE})`,
+        createdAt: now,
+      });
 
-    if (updateRes.changes !== 1) {
-      db.prepare(
-        "INSERT INTO users (email, password_hash, password_salt, credits, created_at, updated_at) VALUES (?, 'oauth', 'oauth', ?, ?, ?)",
-      ).run(order.user_email, creditBonus, now, now);
-    }
-
-    // 5. Insert credit ledger entry (UNIQUE(order_id, type))
-    try {
-      db.prepare(`
-        INSERT INTO credit_transactions (user_email, amount, reason, order_id, type, created_at)
-        VALUES (?, ?, ?, ?, 'PAYMENT_PURCHASE', ?)
-      `).run(
-        order.user_email,
-        creditBonus,
-        `Pembelian ${order.plan_name} (${order.id}) • ACC via WhatsApp Admin`,
-        order.id,
-        now,
-      );
-    } catch {
-      db.exec("ROLLBACK");
-      return {
-        ok: false,
-        error: `Invoice ${order.id} sudah pernah memberikan kredit sebelumnya (double-grant prevented).`,
-      };
-    }
-
-    // 6. Insert tamper-evident HMAC-SHA256 audit log
-    insertAuditLogEntry(db, {
-      orderId: order.id,
-      action: "PAYMENT_APPROVED",
-      actorEmail: `whatsapp:${ADMIN_PHONE}`,
-      provider,
-      transactionId: externalTrxId,
-      amount: order.amount,
-      creditsGranted: creditBonus,
-      statusBefore: "PENDING_REVIEW",
-      statusAfter: "PAID",
-      notes: `Approval via WhatsApp chat 'ACC' dari Admin (${ADMIN_PHONE})`,
-      createdAt: now,
+      return { ok: true, order, creditBonus };
     });
 
-    db.exec("COMMIT");
-
-    return { ok: true, order, creditBonus };
+    return result;
   } catch (err) {
-    try {
-      db.exec("ROLLBACK");
-    } catch {
-      // ignore
-    }
     return { ok: false, error: err.message || "Gagal memproses approval di database." };
   }
 }
 
 // Helper: Cancel Order
-function cancelInvoice(identifier) {
+async function cancelInvoice(identifier) {
   const now = new Date().toISOString();
-  const order = db
-    .prepare(
-      "SELECT * FROM orders WHERE UPPER(id) = UPPER(?) OR (approval_token IS NOT NULL AND UPPER(approval_token) = UPPER(?))",
-    )
-    .get(identifier, identifier);
+  const orderResult = await db.execute({
+    sql: "SELECT * FROM orders WHERE UPPER(id) = UPPER(?) OR (approval_token IS NOT NULL AND UPPER(approval_token) = UPPER(?))",
+    args: [identifier, identifier],
+  });
+  const order = orderResult.rows[0];
 
   if (!order) {
     return { ok: false, error: `Invoice/Token '${identifier}' tidak ditemukan di database.` };
@@ -471,30 +401,30 @@ function cancelInvoice(identifier) {
     return { ok: false, error: `Invoice '${order.id}' tidak dapat dibatalkan karena sudah LUNAS.` };
   }
 
-  db.prepare(`
-    UPDATE orders 
-    SET status = 'REJECTED', 
-        ai_status = 'rejected_by_admin',
-        approval_token = NULL,
-        ai_analysis = 'Ditolak/Dibatalkan oleh Admin via WhatsApp'
-    WHERE id = ?
-  `).run(order.id);
+  await db.execute({
+    sql: `UPDATE orders
+      SET status = 'REJECTED',
+          ai_status = 'rejected_by_admin',
+          approval_token = NULL,
+          ai_analysis = 'Ditolak/Dibatalkan oleh Admin via WhatsApp'
+      WHERE id = ?`,
+    args: [String(order.id)],
+  });
 
   // Insert immutable audit log
-  db.prepare(`
-    INSERT INTO audit_logs (
-      order_id, action, actor_email, provider, transaction_id, 
-      amount, credits_granted, status_before, status_after, notes, created_at
-    ) VALUES (?, 'PAYMENT_REJECTED', ?, ?, 'N/A', ?, 0, ?, 'REJECTED', ?, ?)
-  `).run(
-    order.id,
-    `whatsapp:${ADMIN_PHONE}`,
-    order.payment_method || "QRIS",
-    order.amount,
-    order.status,
-    `Penolakan via WhatsApp chat 'TOLAK' dari Admin (${ADMIN_PHONE})`,
-    now,
-  );
+  await insertAuditLogEntry({
+    orderId: String(order.id),
+    action: "PAYMENT_REJECTED",
+    actorEmail: `whatsapp:${ADMIN_PHONE}`,
+    provider: String(order.payment_method || "QRIS"),
+    transactionId: "N/A",
+    amount: Number(order.amount),
+    creditsGranted: 0,
+    statusBefore: String(order.status),
+    statusAfter: "REJECTED",
+    notes: `Penolakan via WhatsApp chat 'TOLAK' dari Admin (${ADMIN_PHONE})`,
+    createdAt: now,
+  });
 
   return { ok: true, order };
 }
@@ -541,13 +471,13 @@ client.on("message_create", async (msg) => {
       return;
     }
 
-    const result = approveInvoice(targetIdentifier);
+    const result = await approveInvoice(targetIdentifier);
     if (result.ok) {
       const replyText = `✅ *[PEMBAYARAN DISETUJUI / ACC]*
 ━━━━━━━━━━━━━━━━━━━━━━━
 📄 *No. Invoice:* ${result.order.id}
 👤 *Pengguna:* ${result.order.user_email}
-💰 *Nominal:* Rp ${result.order.amount.toLocaleString("id-ID")}
+💰 *Nominal:* Rp ${Number(result.order.amount).toLocaleString("id-ID")}
 💎 *Kredit Ditambahkan:* +${result.creditBonus} Kredit Pro Studio
 🟢 *Status:* LUNAS (PAID)
 
@@ -572,11 +502,12 @@ Saldo kredit pengguna telah aktif seketika di website Dokumenku AI!`;
     }
 
     if (!targetInv) {
-      const latestPending = db
-        .prepare("SELECT id FROM orders WHERE status = 'pending' ORDER BY created_at DESC LIMIT 1")
-        .get();
+      const latestPendingResult = await db.execute(
+        "SELECT id FROM orders WHERE status = 'pending' ORDER BY created_at DESC LIMIT 1"
+      );
+      const latestPending = latestPendingResult.rows[0];
       if (latestPending) {
-        targetInv = latestPending.id;
+        targetInv = String(latestPending.id);
       }
     }
 
@@ -585,9 +516,13 @@ Saldo kredit pengguna telah aktif seketika di website Dokumenku AI!`;
       return;
     }
 
-    const result = cancelInvoice(targetInv);
+    const result = await cancelInvoice(targetInv);
     if (result.ok) {
-      await msg.reply(`❌ *[TAGIHAN DITOLAK / DIBATALKAN]*\n━━━━━━━━━━━━━━━━━━━━━━━\nNo. Invoice: *${result.order.id}*\nPengguna: *${result.order.user_email}*\nStatus: *DIBATALKAN*`);
+      await msg.reply(`❌ *[TAGIHAN DITOLAK / DIBATALKAN]*
+━━━━━━━━━━━━━━━━━━━━━━━
+No. Invoice: *${result.order.id}*
+Pengguna: *${result.order.user_email}*
+Status: *DIBATALKAN*`);
       console.log(`❌ [WA BOT] Invoice ${result.order.id} cancelled via WhatsApp.`);
     } else {
       await msg.reply(`⚠️ Gagal membatalkan: ${result.error}`);
@@ -597,18 +532,25 @@ Saldo kredit pengguna telah aktif seketika di website Dokumenku AI!`;
 
   // ── Handle 'LIST' Command ───────────────────────────────────────
   if (lower === "list" || lower === "pending" || lower === "cek") {
-    const pendingOrders = db
-      .prepare("SELECT id, user_email, amount, credits, created_at, ocr_merchant, ocr_amount FROM orders WHERE status = 'pending' ORDER BY created_at DESC LIMIT 10")
-      .all();
+    const pendingResult = await db.execute(
+      "SELECT id, user_email, amount, credits, created_at, ocr_merchant, ocr_amount FROM orders WHERE status = 'pending' ORDER BY created_at DESC LIMIT 10"
+    );
+    const pendingOrders = pendingResult.rows;
 
     if (pendingOrders.length === 0) {
       await msg.reply("✨ Saat ini tidak ada tagihan yang menunggu verifikasi (0 pending).");
       return;
     }
 
-    let listText = `📋 *DAFTAR TAGIHAN MENUNGGU VERIFIKASI (${pendingOrders.length})*\n━━━━━━━━━━━━━━━━━━━━━━━\n`;
+    let listText = `📋 *DAFTAR TAGIHAN MENUNGGU VERIFIKASI (${pendingOrders.length})*
+━━━━━━━━━━━━━━━━━━━━━━━
+`;
     pendingOrders.forEach((ord, i) => {
-      listText += `\n*${i + 1}. ${ord.id}*\n• User: ${ord.user_email}\n• Tagihan: Rp ${ord.amount.toLocaleString("id-ID")} (+${ord.credits} Kredit)\n• OCR Terbaca: ${ord.ocr_merchant || "-"} (${ord.ocr_amount || "-"})\n• Balas: *ACC ${ord.id}* atau *TOLAK ${ord.id}*\n`;
+      listText += `\n*${i + 1}. ${ord.id}*
+• User: ${ord.user_email}
+• Tagihan: Rp ${Number(ord.amount).toLocaleString("id-ID")} (+${ord.credits} Kredit)
+• OCR Terbaca: ${ord.ocr_merchant || "-"} (${ord.ocr_amount || "-"})
+• Balas: *ACC ${ord.id}* atau *TOLAK ${ord.id}*\n`;
     });
 
     await msg.reply(listText);
@@ -743,7 +685,11 @@ Balas chat ini dengan mengetik:
         return;
       }
       await sendToAdmin(
-        `🔔 *TEST KONEKSI BOT WHATSAPP DOKUMENKU AI*\n━━━━━━━━━━━━━━━━━━━━━━━\nKoneksi WhatsApp Bot ke Dashboard Admin berfungsi normal dan siap menerima approval pembayaran!\n\nWaktu: ${new Date().toLocaleString("id-ID")}`,
+        `🔔 *TEST KONEKSI BOT WHATSAPP DOKUMENKU AI*
+━━━━━━━━━━━━━━━━━━━━━━━
+Koneksi WhatsApp Bot ke Dashboard Admin berfungsi normal dan siap menerima approval pembayaran!
+
+Waktu: ${new Date().toLocaleString("id-ID")}`,
       );
       res.writeHead(200);
       res.end(JSON.stringify({ ok: true, message: "Pesan tes berhasil dikirim ke WhatsApp Admin." }));
@@ -773,9 +719,21 @@ Balas chat ini dengan mengetik:
   }
 });
 
-server.listen(HTTP_PORT, "127.0.0.1", () => {
-  console.log(`🌐 Dispatcher HTTP Server aktif di http://127.0.0.1:${HTTP_PORT}`);
-});
+// Start: run ensureSchema then listen
+async function main() {
+  // Run ensureSchema to create tables if needed
+  try {
+    const { ensureSchema } = await import("../db/index.ts");
+    await ensureSchema(db);
+    const host = process.env.TURSO_DATABASE_URL ? new URL(process.env.TURSO_DATABASE_URL).host : "local";
+    console.log(`🗄️  Connected to: ${host}`);
+  } catch (err) {
+    console.error("⚠️  ensureSchema failed:", err.message);
+  }
 
-// Start WhatsApp Client
-client.initialize();
+  server.listen(HTTP_PORT, "127.0.0.1", () => {
+    console.log(`🌐 Dispatcher HTTP Server aktif di http://127.0.0.1:${HTTP_PORT}`);
+  });
+}
+
+main();

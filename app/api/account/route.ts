@@ -4,7 +4,6 @@ import { getCurrentUser } from "@/lib/auth";
 
 export async function GET(request: Request) {
   const user = await getCurrentUser();
-  const { cookies } = await import("next/headers");
   const isSummaryRequest = new URL(request.url).searchParams.get("view") === "summary";
 
   if (user) {
@@ -73,35 +72,16 @@ export async function GET(request: Request) {
     }
   }
 
-  // Guest Mode
-  let guestCredits = 3;
-  const cookieStore = await cookies();
-  const guestCookie = cookieStore.get("dokumenku_guest")?.value;
-  if (guestCookie !== undefined) {
-    const parsed = Number.parseInt(guestCookie, 10);
-    if (!Number.isNaN(parsed)) {
-      guestCredits = Math.max(0, parsed);
-    }
-  }
-
+  // Guest Mode - no guest credits (users must authenticate to generate)
   const response = NextResponse.json(
     {
       authenticated: false,
-      credits: guestCredits,
+      credits: 0,
       generations: [],
       transactions: [],
     },
     { headers: { "Cache-Control": "no-store, private" } },
   );
-
-  if (guestCookie === undefined) {
-    response.cookies.set("dokumenku_guest", String(guestCredits), {
-      httpOnly: true,
-      sameSite: "lax",
-      maxAge: 60 * 60 * 24 * 30,
-      path: "/",
-    });
-  }
 
   return response;
 }

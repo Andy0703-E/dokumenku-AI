@@ -18,16 +18,8 @@ export async function GET() {
     const credits = creditsResult.rows[0] as unknown as { value: number } | undefined;
     const generationCountResult = await db.execute("SELECT COUNT(*) AS value FROM document_generations WHERE status = 'COMPLETED'");
     const generationCount = generationCountResult.rows[0] as unknown as { value: number } | undefined;
-    const usersResult = await db.execute("SELECT email, available_credits AS credits, updated_at AS updatedAt FROM users ORDER BY updated_at DESC LIMIT 30");
-    const users = usersResult.rows as unknown as Array<{ email: string; credits: number; updatedAt: string }>;
-    const transactionsResult = await db.execute("SELECT id, user_email AS userEmail, amount, reason, created_at AS createdAt FROM credit_transactions ORDER BY id DESC LIMIT 30");
-    const transactions = transactionsResult.rows as unknown as Array<{ id: number; userEmail: string; amount: number; reason: string; createdAt: string }>;
-    // Never include the Base64 proof payload in the overview response. A single
-    // image can be several megabytes; send it only when an admin opens that order.
-    const ordersResult = await db.execute("SELECT id, user_email AS userEmail, plan_name AS planName, amount, credits, payment_method AS paymentMethod, status, CASE WHEN proof_image IS NULL OR proof_image = '' THEN 0 ELSE 1 END AS hasProof, ai_status AS aiStatus, ai_analysis AS aiAnalysis, ocr_merchant AS ocrMerchant, ocr_nmid AS ocrNmid, ocr_amount AS ocrAmount, ocr_transaction_id AS ocrTransactionId, ocr_date AS ocrDate, ocr_status AS ocrStatus, created_at AS createdAt, expires_at AS expiresAt, paid_at AS paidAt FROM orders ORDER BY created_at DESC LIMIT 50");
-    const orders = ordersResult.rows as unknown as Array<{ id: string; userEmail: string; planName: string; amount: number; credits: number; paymentMethod: string; status: string; hasProof?: boolean; aiStatus?: string; aiAnalysis?: string; ocrMerchant?: string; ocrNmid?: string; ocrAmount?: string; ocrTransactionId?: string; ocrDate?: string; ocrStatus?: string; createdAt: string; expiresAt?: string; paidAt?: string }>;
-    const auditLogsResult = await db.execute("SELECT id, order_id AS orderId, action, actor_email AS actorEmail, provider, transaction_id AS transactionId, amount, credits_granted AS creditsGranted, status_before AS statusBefore, status_after AS statusAfter, notes, created_at AS createdAt FROM audit_logs ORDER BY id DESC LIMIT 50");
-    const auditLogs = auditLogsResult.rows as unknown as Array<{ id: number; orderId: string; action: string; actorEmail: string; provider?: string; transactionId?: string; amount: number; creditsGranted: number; statusBefore: string; statusAfter: string; notes?: string; createdAt: string }>;
+    const pendingReviewResult = await db.execute("SELECT COUNT(*) AS value FROM orders WHERE status = 'PENDING_REVIEW'");
+    const pendingReview = pendingReviewResult.rows[0] as unknown as { value: number } | undefined;
 
     const providers = getConfiguredAiProviders();
     const primaryProvider = providers[0];
@@ -133,13 +125,10 @@ export async function GET() {
         users: userCount?.value ?? 0,
         credits: credits?.value ?? 0,
         completedDocuments: totalDocs,
+        pendingReviewCount: pendingReview?.value ?? 0,
       },
       providerInfo,
       providerQuota: quotaResults,
-      users,
-      transactions,
-      orders,
-      auditLogs,
     });
   } catch (error) {
     return NextResponse.json(

@@ -18,6 +18,49 @@ import {
 const MAX_AUTO_FALLBACK_ATTEMPTS = 3;
 const MAX_OUTPUT_TOKENS = 24_000;
 
+// ── In-memory rate limiter (sliding window per user) ────────────────
+const RATE_LIMIT_MAX_CONCURRENT = 3;
+const RATE_LIMIT_MAX_PER_MINUTE = 10;
+const rateLimitStore = new Map<string, { count: number; windowStart: number; concurrent: number }>();
+
+function checkRateLimit(userId: string): { ok: boolean; retryAfter?: number } {
+  const now = Date.now();
+  const entry = rateLimitStore.get(userId);
+
+  if (!entry) {
+    rateLimitStore.set(userId, { count: 1, windowStart: now, concurrent: 1 });
+    return { ok: true };
+  }
+
+  // Reset window if expired
+  if (now - entry.windowStart > 60_000) {
+    entry.count = 0;
+    entry.windowStart = now;
+  }
+
+  // Check concurrent limit
+  if (entry.concurrent >= RATE_LIMIT_MAX_CONCURRENT) {
+    return { ok: false, retryAfter: 5 };
+  }
+
+  // Check per-minute limit
+  if (entry.count >= RATE_LIMIT_MAX_PER_MINUTE) {
+    const retryAfter = Math.ceil((entry.windowStart + 60_000 - now) / 1000);
+    return { ok: false, retryAfter: Math.max(1, retryAfter) };
+  }
+
+  entry.count += 1;
+  entry.concurrent += 1;
+  return { ok: true };
+}
+
+function releaseConcurrent(userId: string) {
+  const entry = rateLimitStore.get(userId);
+  if (entry && entry.concurrent > 0) {
+    entry.concurrent -= 1;
+  }
+}
+
 /**
  * Fetch available models from provider, using cache if available.
  * Falls back to direct provider call if cache is empty.
@@ -172,6 +215,17 @@ export async function POST(request: NextRequest) {
   if (!user) {
     return NextResponse.json({ error: "Silakan masuk terlebih dahulu untuk membuat dokumen." }, { status: 401 });
   }
+
+  // Rate limit check
+  const rateCheck = checkRateLimit(user.email);
+  if (!rateCheck.ok) {
+    return NextResponse.json(
+      { error: "Terlalu banyak permintaan. Coba lagi beberapa saat lagi." },
+      { status: 429, headers: { "Retry-After": String(rateCheck.retryAfter || 5) } },
+    );
+  }
+
+  try {
 
   const body = await request.json().catch(() => null);
   if (!body || typeof body !== "object") {
@@ -648,4 +702,7 @@ export async function POST(request: NextRequest) {
     status: 200,
     headers: directHeaders,
   });
+  } finally {
+    releaseConcurrent(user.email);
+  }
 }

@@ -17,15 +17,10 @@ import {
   getBlueprintSystemPrompt,
   getDocumentSystemPrompt,
   getFullDocumentQualityRepairSystemPrompt,
-  getRevisionSystemPrompt,
   getTargetedRepairSystemPrompt,
   mergeTargetedRepairSections,
+  mergeAlignmentSections,
 } from "@/lib/prompts";
-import {
-  analyzeRevisionImpact,
-  type RevisionPreview,
-  type RevisionScope,
-} from "@/lib/revision-impact";
 import {
   createFallbackBlueprint,
   applyDeterministicFastFixes,
@@ -72,12 +67,6 @@ function minimumCharacters(file: FileName): number {
 /** The always-auto model identifier used by the frontend */
 export const AUTO_MODEL_ID = "auto";
 
-export type RevisionStreamState = {
-  files: FileName[];
-  completedFiles: FileName[];
-  contentByFile: Partial<Record<FileName, string>>;
-};
-
 export function useDocumentGenerator(
   projectId: string = "default_project",
   projectName: string = "",
@@ -91,9 +80,7 @@ export function useDocumentGenerator(
   const [isLoadingDocs, setIsLoadingDocs] = useState(false);
   const [qualityState, setQualityState] = useState<"idle" | "building" | "validating" | "passed" | "failed">("idle");
   const [qualityReport, setQualityReport] = useState<QualityGateReport | null>(null);
-  const [revisionBlueprint, setRevisionBlueprint] = useState<BlueprintContract | null>(null);
   const [modelsUsed, setModelsUsed] = useState<ModelsUsedMap>({});
-  const [revisionStream, setRevisionStream] = useState<RevisionStreamState | null>(null);
   const [qualityPath, setQualityPath] = useState<"FAST_PASS" | "TARGETED_REPAIR" | "TARGETED_REPAIR_ALIGNMENT" | "READY_WITH_WARNINGS" | null>(null);
 
   // Telemetry timing tracker
@@ -131,13 +118,6 @@ export function useDocumentGenerator(
       .then((json) => {
         if (cancelled) return;
         const data = json.data;
-        try {
-          setRevisionBlueprint(
-            typeof data?.blueprint === "string" ? parseBlueprintContract(data.blueprint) : null,
-          );
-        } catch {
-          setRevisionBlueprint(null);
-        }
         if (data?.documents?.length > 0) {
           const loaded = { ...EMPTY_FILES };
           const docTypeToFileName: Record<string, FileName> = {
@@ -180,9 +160,62 @@ export function useDocumentGenerator(
     return () => { cancelled = true; };
   }, [projectId]);
 
+  // Debounce timer ref for auto-saving manual edits
+  const saveTimersRef = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
+  const pendingContentRef = useRef<Record<FileName, string | null>>({
+    "PRD.md": null,
+    "TECH-STACK.md": null,
+    "UI-UX.md": null,
+    "SCHEMA.md": null,
+  });
+
+  const FILE_TO_DOC_TYPE: Record<FileName, string> = {
+    "PRD.md": "prd",
+    "TECH-STACK.md": "tech-stack",
+    "UI-UX.md": "ui-ux",
+    "SCHEMA.md": "schema",
+  };
+
   const updateFileContent = useCallback((fileName: FileName, content: string) => {
+    // Optimistic UI update
     setFiles((prev) => ({ ...prev, [fileName]: content }));
-  }, []);
+
+    // Skip API save for default_project (not persisted)
+    if (!projectId || projectId === "default_project") return;
+
+    // Store latest content for debounce
+    pendingContentRef.current[fileName] = content;
+
+    // Clear previous timer for this file
+    if (saveTimersRef.current[fileName]) {
+      clearTimeout(saveTimersRef.current[fileName]);
+    }
+
+    // Debounce 800ms
+    saveTimersRef.current[fileName] = setTimeout(async () => {
+      const latest = pendingContentRef.current[fileName];
+      if (latest === null) return;
+      pendingContentRef.current[fileName] = null;
+
+      try {
+        const res = await fetch(
+          `/api/projects/${encodeURIComponent(projectId)}/documents`,
+          {
+            method: "PATCH",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ type: FILE_TO_DOC_TYPE[fileName], content: latest }),
+          },
+        );
+        if (!res.ok) {
+          toast.error("Gagal menyimpan perubahan.");
+        } else {
+          toast.success("Tersimpan");
+        }
+      } catch {
+        toast.error("Gagal menyimpan perubahan.");
+      }
+    }, 800);
+  }, [projectId]);
 
   /**
    * Extract model-used metadata from a response header.
@@ -221,298 +254,6 @@ export function useDocumentGenerator(
       console.error("[TELEMETRY_SEMANTIC_WRITE_FAILED]", { attemptId, status, failureCode, error: e instanceof Error ? e.message : e });
     });
   }
-
-  const prepareRevision = useCallback(
-    async (
-      fileToRevise: FileName,
-      revisionComment: string,
-      scope: RevisionScope,
-      reviewContext = "",
-      targetFiles: FileName[] = [],
-    ): Promise<RevisionPreview | null> => {
-      const existingContent = files[fileToRevise];
-      if (!existingContent || !existingContent.trim()) {
-        toast.error("Belum ada konten dokumen untuk direvisi.");
-        return null;
-      }
-      const comment = revisionComment.trim();
-      if (comment.length < 3) {
-        toast.error("Tuliskan instruksi atau komentar revisi terlebih dahulu.");
-        return null;
-      }
-
-      const inferredImpact = analyzeRevisionImpact(fileToRevise, comment);
-      const explicitFiles = scope === "related"
-        ? new Set(targetFiles.filter((file) => DOCUMENT_STEPS.includes(file)))
-        : new Set<FileName>();
-      explicitFiles.add(fileToRevise);
-      const filesToRevise = scope === "related"
-        ? explicitFiles.size > 1
-          ? DOCUMENT_STEPS.filter((file) => explicitFiles.has(file))
-          : DOCUMENT_STEPS.filter((file) => file === fileToRevise || inferredImpact.affectedFiles.includes(file))
-        : [fileToRevise];
-      const impact = targetFiles.length
-        ? {
-            affectedFiles: filesToRevise.filter((file) => file !== fileToRevise),
-            reasons: ["catatan dokumen diproses bersama agar tetap selaras"],
-          }
-        : inferredImpact;
-
-      setIsGenerating(true);
-      setReasoningContent("");
-      setActiveFile(fileToRevise);
-      setRevisionStream({ files: filesToRevise, completedFiles: [], contentByFile: {} });
-      toast.info(`Sedang menyiapkan revisi ${filesToRevise.length > 1 ? `${filesToRevise.length} dokumen` : fileToRevise} dengan AI...`);
-
-      const stage: GenerationStage = "revision";
-
-      try {
-        const before: Partial<Record<FileName, string>> = {};
-        const after: Partial<Record<FileName, string>> = {};
-        const reviseFile = async (file: FileName) => {
-          const currentContent = files[file];
-          const relatedFiles = scope === "related"
-            ? Object.fromEntries(
-                DOCUMENT_STEPS
-                  .filter((relatedFile) => relatedFile !== file)
-                  .map((relatedFile) => [relatedFile, files[relatedFile]]),
-              )
-            : undefined;
-          const response = await requestDocumentStream(
-            `rev-${crypto.randomUUID()}`,
-            AUTO_MODEL_ID,
-            `Komentar / Instruksi Revisi Pengguna:\n\n${comment}\n\nDokumen yang sedang direvisi: ${file}.`,
-            getRevisionSystemPrompt(file, currentContent, comment, {
-              scope,
-              relatedFiles,
-              reviewContext,
-              blueprint: revisionBlueprint,
-            }),
-            12_000,
-            stage,
-          );
-
-          if (!response.ok) {
-            const payload = await response.json().catch(() => null);
-            throw new Error(
-              getProviderError(response.status, "Dokumenku AI", getPayloadError(payload)),
-            );
-          }
-
-          const revisionRecord = extractModelUsedFromResponse(response);
-          if (revisionRecord) setModelsUsed((prev) => ({ ...prev, revision: revisionRecord }));
-
-          let revisedOutput = "";
-          let reasoningText = "";
-          await consumeProviderStream(response, "openai-compatible", "Dokumenku AI", ({ content, reasoning }) => {
-            if (reasoning) reasoningText += reasoning;
-            if (content) {
-              revisedOutput += content;
-              setRevisionStream((previous) => previous
-                ? {
-                    ...previous,
-                    contentByFile: { ...previous.contentByFile, [file]: revisedOutput },
-                  }
-                : previous);
-            }
-            setReasoningContent(reasoningText);
-          });
-          if (!revisedOutput.trim()) throw new Error(`Hasil revisi ${file} kosong, silakan coba lagi.`);
-          const completeness = validateDocumentCompleteness(file, revisedOutput.trim());
-          if (!completeness.valid) {
-            // Never let a shortened stream overwrite a complete document.
-            // Keep the previous version in the preview and continue repairing
-            // the other requested documents where possible.
-            toast.warning(`Hasil revisi ${file} belum lengkap; versi sebelumnya dipertahankan.`);
-            return { file, before: currentContent, after: currentContent };
-          }
-
-          setRevisionStream((previous) => previous
-            ? {
-                ...previous,
-                completedFiles: previous.completedFiles.includes(file)
-                  ? previous.completedFiles
-                  : [...previous.completedFiles, file],
-              }
-            : previous);
-
-          return { file, before: currentContent, after: revisedOutput.trim() };
-        };
-
-        const results: Array<{ file: FileName; before: string; after: string } | undefined> = Array(filesToRevise.length);
-        let nextIndex = 0;
-        const workers = Array.from(
-          { length: Math.min(MAX_PARALLEL_DOCUMENTS, filesToRevise.length) },
-          async () => {
-            while (nextIndex < filesToRevise.length) {
-              const index = nextIndex;
-              nextIndex += 1;
-              results[index] = await reviseFile(filesToRevise[index]);
-            }
-          },
-        );
-        await Promise.all(workers);
-        for (const result of results) {
-          if (!result) continue;
-          before[result.file] = result.before;
-          after[result.file] = result.after;
-        }
-
-        // A bulk repair can leave one narrow contract conflict even after the
-        // main rewrite. Make one compact, section-only repair pass before the
-        // user sees the preview, rather than asking them to repeat revisions.
-        if (scope === "related" && reviewContext && revisionBlueprint) {
-          let repairedFiles = { ...files, ...after } as GeneratedFiles;
-          const firstReport = validateBlueprintConsistency(revisionBlueprint, repairedFiles);
-          const openChecks = firstReport.checks.filter(
-            (check) => check.status === "failed" || check.status === "repair",
-          );
-          const repairFiles = DOCUMENT_STEPS.filter((file) =>
-            filesToRevise.includes(file) && openChecks.some((check) =>
-              documentsNeedingQualityFix({ ...firstReport, checks: [check] }).includes(file),
-            ),
-          );
-
-          if (repairFiles.length) {
-            toast.info("Menyelaraskan bagian dokumen yang masih terkait...");
-            let repairIndex = 0;
-            const repairWorkers = Array.from(
-              { length: Math.min(MAX_PARALLEL_DOCUMENTS, repairFiles.length) },
-              async () => {
-                while (repairIndex < repairFiles.length) {
-                  const index = repairIndex;
-                  repairIndex += 1;
-                  const file = repairFiles[index];
-                  const findings = openChecks
-                    .filter((check) => documentsNeedingQualityFix({ ...firstReport, checks: [check] }).includes(file))
-                    .map((check) => check.detail);
-                  if (!findings.length) continue;
-
-                  try {
-                    const context = extractTargetedRepairContext(file, repairedFiles[file], findings);
-                    const response = await requestDocumentStream(
-                      `rev-fix-${crypto.randomUUID()}`,
-                      AUTO_MODEL_ID,
-                      `Perbaiki hanya bagian ${context.sectionTitles.join(", ") || "terkait"} pada ${file}.`,
-                      getTargetedRepairSystemPrompt(file, revisionBlueprint, context, findings, repairedFiles),
-                      4_500,
-                      stage,
-                      15_000,
-                    );
-                    if (!response.ok) continue;
-
-                    const repairRecord = extractModelUsedFromResponse(response);
-                    if (repairRecord) setModelsUsed((prev) => ({ ...prev, revision: repairRecord }));
-
-                    let replacement = "";
-                    await consumeProviderStream(response, "openai-compatible", "Dokumenku AI", ({ content }) => {
-                      if (!content) return;
-                      replacement += content;
-                      const streamed = mergeTargetedRepairSections(repairedFiles[file], replacement.trim());
-                      setRevisionStream((previous) => previous
-                        ? {
-                            ...previous,
-                            contentByFile: { ...previous.contentByFile, [file]: streamed },
-                          }
-                        : previous);
-                    }, { timeoutMs: 15_000 });
-
-                    if (!replacement.trim()) continue;
-                    const merged = mergeTargetedRepairSections(repairedFiles[file], replacement.trim());
-                    if (!validateDocumentCompleteness(file, merged).valid) continue;
-                    repairedFiles = { ...repairedFiles, [file]: merged };
-                    after[file] = merged;
-                  } catch {
-                    // The reviewed draft remains available when an optional
-                    // narrow repair times out or its provider is unavailable.
-                    continue;
-                  }
-                }
-              },
-            );
-            await Promise.all(repairWorkers);
-          }
-        }
-
-        return {
-          revisionRequestId: `revreq_${crypto.randomUUID()}`,
-          instruction: comment,
-          scope,
-          impact,
-          before,
-          after,
-        };
-      } catch (error) {
-        toast.error(error instanceof Error ? error.message : "Gagal merevisi dokumen.");
-        return null;
-      } finally {
-        setRevisionStream(null);
-        setIsGenerating(false);
-      }
-    },
-    [files, revisionBlueprint],
-  );
-
-  const applyRevisionPreview = useCallback(
-    async (preview: RevisionPreview): Promise<{ ok: true } | { ok: false; error: string }> => {
-      const revisions = Object.entries(preview.after)
-        .filter(([fileName, content]) =>
-          typeof content === "string"
-          && Boolean(content.trim())
-          && content !== preview.before[fileName as FileName],
-        )
-        .map(([fileName, content]) => ({ fileName, content: content as string }));
-      if (!revisions.length) {
-        return { ok: false, error: "Tidak ada perubahan revisi untuk diterapkan." };
-      }
-
-      setIsGenerating(true);
-      try {
-        const response = await fetch(`/api/projects/${encodeURIComponent(projectId)}/revisions`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            revisionRequestId: preview.revisionRequestId,
-            instruction: preview.instruction,
-            scope: preview.scope,
-            revisions,
-          }),
-        });
-        const payload = await response.json().catch(() => null) as {
-          data?: { saved?: number; report?: QualityGateReport };
-          error?: string;
-        } | null;
-        if (!response.ok) {
-          return {
-            ok: false,
-            error: response.status === 401
-              ? "Sesi Anda sudah berakhir. Silakan masuk kembali, lalu coba terapkan revisi."
-              : typeof payload?.error === "string"
-                ? payload.error
-              : "Perubahan belum dapat diterapkan. Sesuaikan instruksi revisi atau pilih sinkronkan dokumen terkait, lalu coba lagi.",
-          };
-        }
-
-        setFiles((previous) => ({ ...previous, ...preview.after }));
-        const report = payload?.data?.report;
-          if (report) {
-            setQualityReport(report);
-            setQualityState(report.passed ? "passed" : "failed");
-          }
-        toast.success(
-          report?.passed === false
-            ? "Perubahan tersimpan. Dokumen siap dengan beberapa catatan."
-            : `${payload?.data?.saved || revisions.length} dokumen revisi telah disimpan.`,
-        );
-        return { ok: true };
-      } catch (error) {
-        return { ok: false, error: error instanceof Error ? error.message : "Revisi tidak dapat diterapkan." };
-      } finally {
-        setIsGenerating(false);
-      }
-    },
-    [projectId],
-  );
 
   const generateFromPrompt = useCallback(
     async (projectPrompt: string) => {
@@ -662,7 +403,6 @@ export function useDocumentGenerator(
           blueprint = createFallbackBlueprint(brief);
           blueprintOutput = JSON.stringify(blueprint);
         }
-        setRevisionBlueprint(blueprint);
         setProgress(10);
         const activeGenerationId = generationId as string;
 
@@ -1075,17 +815,21 @@ export function useDocumentGenerator(
                         throw new SemanticValidationError("Respons alignment tidak berisi JSON.", "INVALID_STRUCTURED_OUTPUT");
                       }
 
-                    const aligned = JSON.parse(jsonMatch[0]) as Partial<GeneratedFiles>;
+                    const aligned = JSON.parse(jsonMatch[0]) as Partial<Record<FileName, Record<string, string>>>;
                     const fileNames: FileName[] = ["PRD.md", "TECH-STACK.md", "UI-UX.md", "SCHEMA.md"];
                     let anyAligned = false;
                     let candidateFiles = currentFiles;
                     for (const fname of fileNames) {
-                      if (typeof aligned[fname] === "string" && aligned[fname].trim().length > 200) {
-                        const check = validateDocumentCompleteness(fname, aligned[fname]);
-                        if (check.valid) {
-                          candidateFiles = { ...candidateFiles, [fname]: aligned[fname] };
-                          anyAligned = true;
-                        }
+                      const replacements = aligned[fname];
+                      if (!replacements || typeof replacements !== "object") continue;
+                      const entries = Object.entries(replacements);
+                      if (!entries.some(([, content]) => typeof content === "string" && content.trim().length > 200)) continue;
+                      const merged = mergeAlignmentSections(candidateFiles[fname] || "", Object.fromEntries(entries));
+                      if (merged.trim().length <= 200) continue;
+                      const check = validateDocumentCompleteness(fname, merged);
+                      if (check.valid) {
+                        candidateFiles = { ...candidateFiles, [fname]: merged };
+                        anyAligned = true;
                       }
                     }
                     if (!anyAligned) {
@@ -1257,8 +1001,6 @@ export function useDocumentGenerator(
     setQualityState("idle");
     setQualityReport(null);
     setQualityPath(null);
-    setRevisionBlueprint(null);
-    setRevisionStream(null);
     setModelsUsed({});
   }, []);
 
@@ -1272,14 +1014,11 @@ export function useDocumentGenerator(
     qualityState,
     qualityReport,
     qualityPath,
-    revisionStream,
     reasoningContent,
     lastError,
     modelsUsed,
     setActiveFile,
     updateFileContent,
-    prepareRevision,
-    applyRevisionPreview,
     generateFromPrompt,
     resetAll,
   };

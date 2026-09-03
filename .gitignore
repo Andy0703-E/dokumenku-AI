@@ -17,6 +17,9 @@
 /.next/
 /out/
 
+# env files
+.env*
+
 # misc
 .DS_Store
 *.pem
@@ -27,21 +30,26 @@ yarn-debug.log*
 yarn-error.log*
 .pnpm-debug.log*
 
-# env files (can opt-in for committing if needed)
-.env*
-
 # vercel
 .vercel
 
 # typescript
 next-env.d.ts
+*.tsbuildinfo
+
+# build output
 /dist/
 /.wrangler/
 /.sites-runtime/
 /outputs/
 /work/
-/data/
 
-.vercel
-.env*
-*.tsbuildinfo
+# local database (Turso is source of truth)
+/data/*.sqlite
+/data/*.sqlite-*
+/data/*.sqlite-shm
+/data/*.sqlite-wal
+
+# WhatsApp web session
+.wwebjs_auth/
+.wwebjs_auth_session/

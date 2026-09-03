@@ -57,7 +57,7 @@ type ProviderQuota = {
 };
 
 type Overview = {
-  summary: { users: number; credits: number; completedDocuments: number };
+  summary: { users: number; credits: number; completedDocuments: number; pendingReviewCount: number };
   providerInfo?: {
     status: string;
     providerName: string;
@@ -80,34 +80,27 @@ type Overview = {
     }>;
   };
   providerQuota?: ProviderQuota[];
-  users: Array<{ email: string; credits: number; updatedAt: string }>;
-  transactions: Array<{
-    id: number;
-    userEmail: string;
-    amount: number;
-    reason: string;
-    createdAt: string;
-  }>;
-  orders?: Array<{
-    id: string;
-    userEmail: string;
-    planName: string;
-    amount: number;
-    credits: number;
-    paymentMethod: string;
-    status: string;
-    hasProof?: boolean;
-    aiStatus?: string;
-    aiAnalysis?: string;
-    ocrMerchant?: string;
-    ocrNmid?: string;
-    ocrAmount?: string;
-    ocrTransactionId?: string;
-    ocrDate?: string;
-    ocrStatus?: string;
-    createdAt: string;
-    paidAt?: string;
-  }>;
+};
+
+type OrderRow = {
+  id: string;
+  userEmail: string;
+  planName: string;
+  amount: number;
+  credits: number;
+  paymentMethod: string;
+  status: string;
+  hasProof?: boolean;
+  aiStatus?: string;
+  aiAnalysis?: string;
+  ocrMerchant?: string;
+  ocrNmid?: string;
+  ocrAmount?: string;
+  ocrTransactionId?: string;
+  ocrDate?: string;
+  ocrStatus?: string;
+  createdAt: string;
+  paidAt?: string;
 };
 
 export default function AdminDashboard() {
@@ -139,15 +132,31 @@ export default function AdminDashboard() {
   const [searchUser, setSearchUser] = useState("");
   const [txFilter, setTxFilter] = useState("all");
   const [showModelsModal, setShowModelsModal] = useState(false);
-  const [confirmApproveOrder, setConfirmApproveOrder] = useState<NonNullable<Overview["orders"]>[number] | null>(null);
+  const [confirmApproveOrder, setConfirmApproveOrder] = useState<OrderRow | null>(null);
   const [rejectOrderModal, setRejectOrderModal] = useState<{
-    order: NonNullable<Overview["orders"]>[number];
+    order: OrderRow;
     reasonCode: string;
     reasonNote: string;
   } | null>(null);
 
+  // Paginated data state
+  const [usersList, setUsersList] = useState<Array<{ email: string; credits: number; reservedCredits?: number; updatedAt: string }>>([]);
+  const [usersTotal, setUsersTotal] = useState(0);
+  const [usersPage, setUsersPage] = useState(1);
+  const [usersLoading, setUsersLoading] = useState(false);
+
+  const [ordersList, setOrdersList] = useState<OrderRow[]>([]);
+  const [ordersTotal, setOrdersTotal] = useState(0);
+  const [ordersPage, setOrdersPage] = useState(1);
+  const [ordersLoading, setOrdersLoading] = useState(false);
+
+  const [txList, setTxList] = useState<Array<{ id: number; userEmail: string; amount: number; reason: string; createdAt: string }>>([]);
+  const [txTotal, setTxTotal] = useState(0);
+  const [auditPage, setAuditPage] = useState(1);
+  const [txLoading, setTxLoading] = useState(false);
+
   // Admin Login State
-  const [adminEmail, setAdminEmail] = useState("dadung2707@gmail.com");
+  const [adminEmail, setAdminEmail] = useState("");
   const [adminPassword, setAdminPassword] = useState("");
   const [showAdminPassword, setShowAdminPassword] = useState(false);
   const [isAdminLoggingIn, setIsAdminLoggingIn] = useState(false);
@@ -213,10 +222,12 @@ export default function AdminDashboard() {
   const [isDisconnectingWa, setIsDisconnectingWa] = useState(false);
 
   // ── Pagination State ────────────────────────────────────────────
-  const PAGE_SIZE = 10;
-  const [usersPage, setUsersPage] = useState(1);
-  const [ordersPage, setOrdersPage] = useState(1);
-  const [auditPage, setAuditPage] = useState(1);
+  // ── Chat Inbox State ──────────────────────────────────────────
+  type ChatMsg = { id: number; userEmail: string; userName: string; message: string; adminReply: string | null; createdAt: string };
+  const [chatMessages, setChatMessages] = useState<ChatMsg[]>([]);
+  const [chatReplyTarget, setChatReplyTarget] = useState<number | null>(null);
+  const [chatReplyText, setChatReplyText] = useState("");
+  const [isSendingChatReply, setIsSendingChatReply] = useState(false);
 
   async function handleDisconnectWa() {
     if (!window.confirm("Yakin ingin memutus sesi bot WhatsApp ini? Anda harus scan QR code ulang setelah ini.")) {
@@ -352,6 +363,41 @@ export default function AdminDashboard() {
     }
   }
 
+  async function loadChatMessages() {
+    try {
+      const res = await fetch("/api/admin/chat", { cache: "no-store" });
+      if (!res.ok) return;
+      const payload = (await res.json().catch(() => ({}))) as { ok?: boolean; messages?: ChatMsg[] };
+      if (payload.ok && payload.messages) {
+        setChatMessages(payload.messages);
+      }
+    } catch {
+      // silent
+    }
+  }
+
+  async function handleChatReply(chatId: number) {
+    if (!chatReplyText.trim()) return;
+    setIsSendingChatReply(true);
+    try {
+      const res = await fetch("/api/admin/chat", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ chatId, reply: chatReplyText.trim() }),
+      });
+      if (res.ok) {
+        toast.success("Balasan terkirim.");
+        setChatReplyTarget(null);
+        setChatReplyText("");
+        await loadChatMessages();
+      } else {
+        toast.error("Gagal mengirim balasan.");
+      }
+    } finally {
+      setIsSendingChatReply(false);
+    }
+  }
+
   async function loadOverview() {
     setIsLoading(true);
     try {
@@ -376,6 +422,70 @@ export default function AdminDashboard() {
     }
   }
 
+  async function loadUsers(page: number, search: string) {
+    setUsersLoading(true);
+    try {
+      const params = new URLSearchParams({ page: String(page), limit: "10" });
+      if (search) params.set("search", search);
+      const res = await fetch(`/api/admin/users?${params}`, { cache: "no-store" });
+      if (res.ok) {
+        const json = (await res.json()) as { ok?: boolean; data?: { users: Array<{ email: string; credits: number; updatedAt: string }>; total: number; page: number } };
+        const payload = json.data;
+        if (payload) {
+          setUsersList(payload.users ?? []);
+          setUsersTotal(payload.total ?? 0);
+          setUsersPage(payload.page ?? page);
+        }
+      }
+    } catch {
+      // ignore
+    } finally {
+      setUsersLoading(false);
+    }
+  }
+
+  async function loadOrders(page: number) {
+    setOrdersLoading(true);
+    try {
+      const params = new URLSearchParams({ page: String(page), limit: "10" });
+      const res = await fetch(`/api/admin/orders?${params}`, { cache: "no-store" });
+      if (res.ok) {
+        const json = (await res.json()) as { ok?: boolean; data?: { orders: OrderRow[]; total: number; page: number } };
+        const payload = json.data;
+        if (payload) {
+          setOrdersList(payload.orders ?? []);
+          setOrdersTotal(payload.total ?? 0);
+          setOrdersPage(payload.page ?? page);
+        }
+      }
+    } catch {
+      // ignore
+    } finally {
+      setOrdersLoading(false);
+    }
+  }
+
+  async function loadTransactions(page: number, type: string) {
+    setTxLoading(true);
+    try {
+      const params = new URLSearchParams({ page: String(page), limit: "10", type });
+      const res = await fetch(`/api/admin/transactions?${params}`, { cache: "no-store" });
+      if (res.ok) {
+        const json = (await res.json()) as { ok?: boolean; data?: { transactions: Array<{ id: number; userEmail: string; amount: number; reason: string; createdAt: string }>; total: number; page: number } };
+        const payload = json.data;
+        if (payload) {
+          setTxList(payload.transactions ?? []);
+          setTxTotal(payload.total ?? 0);
+          setAuditPage(payload.page ?? page);
+        }
+      }
+    } catch {
+      // ignore
+    } finally {
+      setTxLoading(false);
+    }
+  }
+
   async function initializeAdmin() {
     setIsLoading(true);
     try {
@@ -386,6 +496,12 @@ export default function AdminDashboard() {
 
       if (isAdmin) {
         await loadOverview();
+        // Load paginated data in parallel
+        await Promise.all([
+          loadUsers(1, ""),
+          loadOrders(1),
+          loadTransactions(1, "all"),
+        ]);
       } else {
         setData(null);
         setIsLoading(false);
@@ -399,6 +515,23 @@ export default function AdminDashboard() {
   useEffect(() => {
     void initializeAdmin();
   }, []);
+
+  // Refetch users when search changes (debounced)
+  useEffect(() => {
+    const timeout = setTimeout(() => {
+      if (isAdminAuthenticated) {
+        void loadUsers(1, searchUser);
+      }
+    }, 400);
+    return () => clearTimeout(timeout);
+  }, [searchUser, isAdminAuthenticated]);
+
+  // Refetch transactions when filter changes
+  useEffect(() => {
+    if (isAdminAuthenticated) {
+      void loadTransactions(1, txFilter);
+    }
+  }, [txFilter, isAdminAuthenticated]);
 
   async function handleAdminLogout() {
     await fetch("/api/admin/logout", { method: "POST" });
@@ -449,31 +582,21 @@ export default function AdminDashboard() {
     }
   }
 
-  // Filtered users
-  const filteredUsers = useMemo(() => {
-    if (!data?.users) return [];
-    if (!searchUser.trim()) return data.users;
-    return data.users.filter((u) =>
-      u.email.toLowerCase().includes(searchUser.toLowerCase()),
-    );
-  }, [data?.users, searchUser]);
+  // ── Pagination totals (server-side) ─────────────────────────
+  const usersTotalPages = Math.max(1, Math.ceil(usersTotal / 10));
+  const ordersTotalPages = Math.max(1, Math.ceil(ordersTotal / 10));
+  const txTotalPages = Math.max(1, Math.ceil(txTotal / 10));
 
-  const usersTotalPages = Math.max(1, Math.ceil(filteredUsers.length / PAGE_SIZE));
-  const paginatedUsers = filteredUsers.slice((usersPage - 1) * PAGE_SIZE, usersPage * PAGE_SIZE);
-
-  // Filtered transactions
-  const filteredTransactions = useMemo(() => {
-    if (!data?.transactions) return [];
-    if (txFilter === "add") return data.transactions.filter((t) => t.amount > 0);
-    if (txFilter === "deduct") return data.transactions.filter((t) => t.amount < 0);
-    return data.transactions;
-  }, [data?.transactions, txFilter]);
-
-  const ordersTotalPages = Math.max(1, Math.ceil((data?.orders?.length ?? 0) / PAGE_SIZE));
-  const paginatedOrders = (data?.orders ?? []).slice((ordersPage - 1) * PAGE_SIZE, ordersPage * PAGE_SIZE);
-
-  const txTotalPages = Math.max(1, Math.ceil(filteredTransactions.length / PAGE_SIZE));
-  const paginatedTx = filteredTransactions.slice((auditPage - 1) * PAGE_SIZE, auditPage * PAGE_SIZE);
+  // Refetch on page changes
+  useEffect(() => {
+    if (isAdminAuthenticated) void loadUsers(usersPage, searchUser);
+  }, [usersPage]);
+  useEffect(() => {
+    if (isAdminAuthenticated) void loadOrders(ordersPage);
+  }, [ordersPage]);
+  useEffect(() => {
+    if (isAdminAuthenticated) void loadTransactions(auditPage, txFilter);
+  }, [auditPage]);
 
   return (
     <main className="admin-shell">
@@ -909,7 +1032,7 @@ export default function AdminDashboard() {
               </div>
 
               <div style={{ overflowX: "auto", marginTop: "16px" }}>
-                {paginatedUsers.length > 0 ? (
+                {usersList.length > 0 ? (
                   <>
                     <table className="admin-custom-table">
                       <thead>
@@ -921,7 +1044,7 @@ export default function AdminDashboard() {
                         </tr>
                       </thead>
                       <tbody>
-                        {paginatedUsers.map((user) => (
+                        {usersList.map((user) => (
                           <tr key={user.email}>
                             <td style={{ fontWeight: 600 }}>{user.email}</td>
                             <td>
@@ -997,7 +1120,7 @@ export default function AdminDashboard() {
                 </span>
               </div>
 
-              {data.orders && data.orders.filter((o) => o.status === "PENDING_REVIEW").length > 0 && (
+              {data.summary.pendingReviewCount > 0 && (
                 <span
                   style={{
                     fontSize: "0.76rem",
@@ -1012,13 +1135,13 @@ export default function AdminDashboard() {
                     gap: "6px",
                   }}
                 >
-                  <Clock size={13} /> {data.orders.filter((o) => o.status === "PENDING_REVIEW").length} Menunggu Verifikasi
+                  <Clock size={13} /> {data.summary.pendingReviewCount} Menunggu Verifikasi
                 </span>
               )}
             </div>
 
             <div style={{ overflowX: "auto", marginTop: "16px" }}>
-              {paginatedOrders.length > 0 ? (
+              {ordersList.length > 0 ? (
                 <>
                   <table className="admin-custom-table">
                     <thead>
@@ -1035,7 +1158,7 @@ export default function AdminDashboard() {
                       </tr>
                     </thead>
                     <tbody>
-                      {paginatedOrders.map((ord) => (
+                      {ordersList.map((ord) => (
                       <tr key={ord.id}>
                         <td>
                           <code style={{ fontSize: "0.78rem", fontWeight: 750, color: "var(--navy)", background: "#F1F5F9", padding: "2px 6px", borderRadius: "6px" }}>
@@ -1292,6 +1415,113 @@ export default function AdminDashboard() {
             </div>
           </section>
 
+          {/* Chat Inbox Section */}
+          <section className="admin-card-surface" aria-labelledby="chat-inbox-heading">
+            <div className="admin-card-header">
+              <div>
+                <h2 id="chat-inbox-heading" style={{ margin: 0, fontSize: "1.15rem", fontWeight: 800, color: "var(--navy)" }}>
+                  Inbox Chat Pengguna
+                </h2>
+                <span className="admin-card-sub" style={{ margin: 0 }}>
+                  Pesan masuk dari pengguna dan balasan admin.
+                </span>
+              </div>
+              <button
+                type="button"
+                onClick={() => void loadChatMessages()}
+                style={{ padding: "6px 12px", borderRadius: "8px", border: "1px solid var(--border)", background: "#fff", cursor: "pointer", fontSize: "0.78rem", fontWeight: 600, display: "inline-flex", alignItems: "center", gap: "6px" }}
+              >
+                <RefreshCw size={14} /> Muat Ulang
+              </button>
+            </div>
+
+            <div style={{ overflowX: "auto" }}>
+              {chatMessages.length === 0 ? (
+                <div className="admin-empty-table-state">
+                  <div className="admin-empty-icon">
+                    <MessageSquare size={24} />
+                  </div>
+                  <span style={{ fontSize: "0.88rem", fontWeight: 700, color: "var(--navy)" }}>
+                    Belum ada pesan chat.
+                  </span>
+                </div>
+              ) : (
+                <table className="admin-table" style={{ width: "100%" }}>
+                  <thead>
+                    <tr>
+                      <th style={{ minWidth: "60px" }}>ID</th>
+                      <th>Pengguna</th>
+                      <th>Pesan</th>
+                      <th>Balasan Admin</th>
+                      <th style={{ minWidth: "140px" }}>Waktu</th>
+                      <th style={{ minWidth: "100px" }}>Aksi</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {chatMessages.map((chat) => (
+                      <tr key={chat.id}>
+                        <td style={{ fontWeight: 600, fontSize: "0.78rem" }}>#{chat.id}</td>
+                        <td>
+                          <div style={{ fontSize: "0.82rem", fontWeight: 600 }}>{chat.userName}</div>
+                          <div style={{ fontSize: "0.72rem", color: "var(--text-muted)" }}>{chat.userEmail}</div>
+                        </td>
+                        <td style={{ maxWidth: "260px", fontSize: "0.82rem", lineHeight: 1.45 }}>{chat.message}</td>
+                        <td style={{ maxWidth: "260px" }}>
+                          {chat.adminReply ? (
+                            <span style={{ fontSize: "0.82rem", color: "var(--cobalt)", fontWeight: 600 }}>{chat.adminReply}</span>
+                          ) : chatReplyTarget === chat.id ? (
+                            <div style={{ display: "flex", gap: "6px", alignItems: "center" }}>
+                              <input
+                                type="text"
+                                value={chatReplyText}
+                                onChange={(e) => setChatReplyText(e.target.value)}
+                                onKeyDown={(e) => { if (e.key === "Enter") void handleChatReply(chat.id); }}
+                                placeholder="Balasan..."
+                                autoFocus
+                                style={{ flex: 1, padding: "4px 8px", borderRadius: "6px", border: "1px solid var(--border)", fontSize: "0.78rem" }}
+                              />
+                              <button
+                                type="button"
+                                onClick={() => void handleChatReply(chat.id)}
+                                disabled={isSendingChatReply || !chatReplyText.trim()}
+                                style={{ padding: "4px 8px", borderRadius: "6px", border: "none", background: "var(--cobalt)", color: "#fff", cursor: "pointer", fontSize: "0.72rem" }}
+                              >
+                                {isSendingChatReply ? <Loader2 size={12} className="animate-spin" /> : <Send size={12} />}
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => { setChatReplyTarget(null); setChatReplyText(""); }}
+                                style={{ padding: "4px 6px", borderRadius: "6px", border: "1px solid var(--border)", background: "#fff", cursor: "pointer", fontSize: "0.72rem" }}
+                              >
+                                <X size={12} />
+                              </button>
+                            </div>
+                          ) : (
+                            <span style={{ fontSize: "0.78rem", color: "var(--text-muted)", fontStyle: "italic" }}>Belum dibalas</span>
+                          )}
+                        </td>
+                        <td style={{ fontSize: "0.78rem", color: "var(--text-muted)", whiteSpace: "nowrap" }}>
+                          {new Date(String(chat.createdAt)).toLocaleString("id-ID")}
+                        </td>
+                        <td>
+                          {!chat.adminReply && chatReplyTarget !== chat.id && (
+                            <button
+                              type="button"
+                              onClick={() => { setChatReplyTarget(chat.id); setChatReplyText(""); }}
+                              style={{ padding: "4px 10px", borderRadius: "6px", border: "1px solid var(--cobalt)", background: "#fff", color: "var(--cobalt)", cursor: "pointer", fontSize: "0.72rem", fontWeight: 600, display: "inline-flex", alignItems: "center", gap: "4px" }}
+                            >
+                              <Send size={12} /> Balas
+                            </button>
+                          )}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              )}
+            </div>
+          </section>
+
           {/* Bottom Table: Riwayat Audit Transaksi Kredit */}
           <section className="admin-card-surface" aria-labelledby="audit-table-heading">
             <div className="admin-card-header">
@@ -1331,19 +1561,20 @@ export default function AdminDashboard() {
             </div>
 
             <div style={{ overflowX: "auto", marginTop: "16px" }}>
-              {paginatedTx.length > 0 ? (
+              {txList.length > 0 ? (
                 <>
                   <table className="admin-custom-table">
                     <thead>
                       <tr>
+                        <th>ID</th>
                         <th>Pengguna</th>
-                        <th>Perubahan</th>
+                        <th>Nominal</th>
                         <th>Keterangan</th>
-                        <th>Waktu Transaksi</th>
+                        <th>Waktu</th>
                       </tr>
                     </thead>
                     <tbody>
-                      {paginatedTx.map((tx) => (
+                      {txList.map((tx) => (
                       <tr key={tx.id}>
                         <td style={{ fontWeight: 600 }}>{tx.userEmail}</td>
                         <td>
@@ -1810,7 +2041,7 @@ export default function AdminDashboard() {
                     className="btn-secondary"
                     style={{ color: "#DC2626" }}
                     onClick={() => {
-                      const order = data?.orders?.find((item) => item.id === inspectProofImage.orderId);
+                      const order = ordersList.find((item) => item.id === inspectProofImage.orderId);
                       if (!order) return;
                       setInspectProofImage(null);
                       setRejectOrderModal({ order, reasonCode: "TRANSACTION_NOT_FOUND", reasonNote: "" });
@@ -1822,7 +2053,7 @@ export default function AdminDashboard() {
                     type="button"
                     className="btn-primary"
                     onClick={() => {
-                      const order = data?.orders?.find((item) => item.id === inspectProofImage.orderId);
+                      const order = ordersList.find((item) => item.id === inspectProofImage.orderId);
                       if (!order) return;
                       setInspectProofImage(null);
                       setConfirmApproveOrder(order);

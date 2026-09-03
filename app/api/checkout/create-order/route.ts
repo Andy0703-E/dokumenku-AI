@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getDatabase } from "@/db";
 import { getCurrentUser } from "@/lib/auth";
+import { getPlanById } from "@/lib/packages";
 
 export async function POST(request: NextRequest) {
   const user = await getCurrentUser();
@@ -16,19 +17,21 @@ export async function POST(request: NextRequest) {
     paymentMethod?: string;
   };
 
+  const planDef = getPlanById(plan);
+  if (!planDef) {
+    return NextResponse.json({ error: "Paket tidak valid." }, { status: 400 });
+  }
+
   try {
     const db = await getDatabase();
     const now = new Date().toISOString();
     const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
     const orderId = `INV-${Date.now().toString(36).toUpperCase()}-${Math.floor(100 + Math.random() * 900)}`;
-    const planName = plan === "pro-max" ? "Pro Max" : "Pro Studio";
-    const amount = plan === "pro-max" ? 75000 : 20000;
-    const credits = plan === "pro-max" ? 500 : 100;
 
     await db.execute({
       sql: `INSERT INTO orders (id, user_email, plan_name, amount, credits, payment_method, status, created_at, expires_at)
         VALUES (?, ?, ?, ?, ?, ?, 'CREATED', ?, ?)`,
-      args: [orderId, user.email, planName, amount, credits, paymentMethod, now, expiresAt],
+      args: [orderId, user.email, planDef.name, planDef.price, planDef.credits, paymentMethod, now, expiresAt],
     });
 
     return NextResponse.json({
@@ -36,9 +39,9 @@ export async function POST(request: NextRequest) {
       order: {
         id: orderId,
         userEmail: user.email,
-        planName,
-        amount,
-        credits,
+        planName: planDef.name,
+        amount: planDef.price,
+        credits: planDef.credits,
         paymentMethod,
         status: "CREATED",
         createdAt: now,

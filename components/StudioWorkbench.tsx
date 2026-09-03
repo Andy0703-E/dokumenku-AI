@@ -243,6 +243,11 @@ export default function StudioWorkbench({
     event.preventDefault();
     if (isGenerating) return;
 
+    if (!isAuthenticated) {
+      window.location.href = `/login?redirect=${encodeURIComponent("/studio")}`;
+      return;
+    }
+
     if (creditsRemaining <= 0) {
       setShowOutOfCreditsModal(true);
       toast.error(
@@ -767,6 +772,25 @@ export default function StudioWorkbench({
                 </span>
               )}
             </div>
+
+            {/* Quality Notes - Top 3 Critical */}
+            {qualityState === "failed" && qualityReport && qualityReport.failures && qualityReport.failures.length > 0 && (
+              <div style={{ padding: "8px 14px", background: "#FEF2F2", borderBottom: "1px solid #FECACA", fontSize: "0.78rem" }}>
+                <div style={{ fontWeight: 700, color: "#991B1B", marginBottom: "4px" }}>
+                  {qualityReport.failures.length} catatan kritis:
+                </div>
+                <ul style={{ margin: 0, paddingLeft: "16px", color: "#7F1D1D", lineHeight: 1.5 }}>
+                  {qualityReport.failures.slice(0, 3).map((f, i) => (
+                    <li key={i}>{f}</li>
+                  ))}
+                </ul>
+                {qualityReport.failures.length > 3 && (
+                  <div style={{ color: "#991B1B", marginTop: "2px", fontStyle: "italic" }}>
+                    +{qualityReport.failures.length - 3} catatan lainnya (tidak memblokir unduhan)
+                  </div>
+                )}
+              </div>
+            )}
 
             {/* 4 Tabs Bar */}
             <div className="studio-tabs-row" role="tablist">

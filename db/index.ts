@@ -106,7 +106,7 @@ export function buildCanonicalAuditPayload(params: {
 
 let client: Client | undefined;
 
-async function ensureSchema(db: Client): Promise<void> {
+export async function ensureSchema(db: Client): Promise<void> {
   const statements = [
     `CREATE TABLE IF NOT EXISTS users (
       email TEXT PRIMARY KEY,
@@ -384,9 +384,21 @@ async function ensureSchema(db: Client): Promise<void> {
     `ALTER TABLE users ADD COLUMN device_fingerprint TEXT`,
     `ALTER TABLE project_documents ADD COLUMN project_name TEXT DEFAULT ''`,
     `ALTER TABLE project_documents ADD COLUMN selected_model TEXT DEFAULT ''`,
+    `ALTER TABLE project_documents ADD COLUMN source TEXT DEFAULT 'ai'`,
     `ALTER TABLE project_document_revisions ADD COLUMN revision_request_id TEXT`,
     `ALTER TABLE project_document_revisions ADD COLUMN revision_number INTEGER NOT NULL DEFAULT 1`,
     `CREATE INDEX IF NOT EXISTS idx_project_doc_revisions_request ON project_document_revisions(user_email, project_id, revision_request_id)`,
+    `CREATE TABLE IF NOT EXISTS model_overrides (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      override_type TEXT NOT NULL,
+      target_key TEXT NOT NULL,
+      value TEXT NOT NULL,
+      note TEXT,
+      created_by TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      UNIQUE(override_type, target_key)
+    )`,
+    `CREATE INDEX IF NOT EXISTS idx_model_overrides_type ON model_overrides(override_type, target_key)`,
   ];
 
   for (const sql of statements) {
@@ -458,6 +470,7 @@ export async function getDatabase(): Promise<Client> {
 
     client = createClient({ url, authToken: authToken || undefined });
     await ensureSchema(client);
+    await restoreModelOverridesFromDB(client);
   }
   return client;
 }
@@ -2188,4 +2201,83 @@ export async function getProjectDocuments(
     qualityStatus: (quality.rows[0]?.quality_status as string | undefined) ?? null,
     qualityReport: (quality.rows[0]?.quality_report as string | undefined) ?? null,
   };
+}
+
+// ─── Model Overrides (health + routing) ─────────────────────────────
+
+export type ModelOverrideType = "health" | "routing";
+
+export async function upsertModelOverride(
+  db: DBExecutor,
+  params: {
+    overrideType: ModelOverrideType;
+    targetKey: string;
+    value: string;
+    note?: string;
+    createdBy: string;
+  },
+): Promise<void> {
+  const now = new Date().toISOString();
+  await db.execute({
+    sql: `INSERT INTO model_overrides (override_type, target_key, value, note, created_by, created_at)
+      VALUES (?, ?, ?, ?, ?, ?)
+      ON CONFLICT(override_type, target_key) DO UPDATE SET
+        value = excluded.value,
+        note = excluded.note,
+        created_by = excluded.created_by,
+        created_at = excluded.created_at`,
+    args: [params.overrideType, params.targetKey, params.value, params.note || null, params.createdBy, now],
+  });
+}
+
+export async function deleteModelOverride(
+  db: DBExecutor,
+  overrideType: ModelOverrideType,
+  targetKey: string,
+): Promise<void> {
+  await db.execute({
+    sql: "DELETE FROM model_overrides WHERE override_type = ? AND target_key = ?",
+    args: [overrideType, targetKey],
+  });
+}
+
+export async function loadModelOverrides(
+  db: DBExecutor,
+  overrideType?: ModelOverrideType,
+): Promise<Array<{ overrideType: string; targetKey: string; value: string; note: string | null; createdBy: string; createdAt: string }>> {
+  const sql = overrideType
+    ? "SELECT * FROM model_overrides WHERE override_type = ? ORDER BY created_at DESC"
+    : "SELECT * FROM model_overrides ORDER BY created_at DESC";
+  const args = overrideType ? [overrideType] : [];
+  const result = await db.execute({ sql, args });
+  return result.rows.map((row) => ({
+    overrideType: row.override_type as string,
+    targetKey: row.target_key as string,
+    value: row.value as string,
+    note: row.note as string | null,
+    createdBy: row.created_by as string,
+    createdAt: row.created_at as string,
+  }));
+}
+
+/**
+ * Load model overrides from DB and apply to in-memory state.
+ * Called at app startup to restore admin overrides after restart.
+ */
+export async function restoreModelOverridesFromDB(db: DBExecutor): Promise<void> {
+  try {
+    const { setModelHealthOverride } = await import("@/lib/models-config");
+    const { setAdminRoutingOverride } = await import("@/lib/model-router");
+
+    const overrides = await loadModelOverrides(db);
+    for (const o of overrides) {
+      if (o.overrideType === "health") {
+        setModelHealthOverride(o.targetKey, o.value as "healthy" | "degraded" | "maintenance", o.note || undefined);
+      } else if (o.overrideType === "routing") {
+        setAdminRoutingOverride(o.targetKey as Parameters<typeof setAdminRoutingOverride>[0], o.value);
+      }
+    }
+  } catch {
+    // Startup restore is best-effort
+  }
 }

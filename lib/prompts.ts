@@ -305,8 +305,9 @@ ${existingContent.slice(0, 12_000)}`;
 
 /**
  * Creates a cross-document alignment prompt. After individual repairs,
- * this prompt sends ALL documents to the AI so it can align terminology,
- * roles, statuses, and endpoints across all files simultaneously.
+ * this prompt sends ONLY relevant sections (not full documents) so the AI
+ * can align terminology, roles, statuses, and endpoints with minimal tokens.
+ * The AI returns JSON with only replacement sections, not full documents.
  */
 export function getAlignmentSystemPrompt(
   files: GeneratedFiles,
@@ -330,20 +331,39 @@ export function getAlignmentSystemPrompt(
   ];
   const uniqueStatuses = [...new Set(statusNames)].join(", ");
 
-  return `Anda adalah solution architect senior. Tugas Anda: SELARASKAN istilah lintas keempat dokumen berikut agar konsisten.
+  const fileNames: FileName[] = ["PRD.md", "TECH-STACK.md", "UI-UX.md", "SCHEMA.md"];
+  const findingHints = findings.join(" ").toLocaleLowerCase("id-ID");
+
+  const sliced = fileNames.map((fname) => {
+    const content = files[fname] || "";
+    const sections = markdownSections(content);
+    const relevant = sections.filter((s) => {
+      const title = normalizeSectionTitle(s.title);
+      return title.split(" ").some((word) => word.length >= 3 && findingHints.includes(word));
+    });
+    if (relevant.length) {
+      const selected = relevant.slice(0, 3).map((s) => s.content).join("\n\n");
+      return { file: fname, content: selected.slice(0, 3_000) };
+    }
+    const intro = content.split("\n## ")[0] || content.slice(0, 1_500);
+    return { file: fname, content: intro.slice(0, 3_000) };
+  });
+
+  const filesSection = sliced.map((s) => `### ${s.file}\n${s.content}`).join("\n\n");
+
+  return `Anda adalah solution architect senior. Tugas Anda: SELARASKAN istilah pada section yang diberikan agar konsisten dengan kontrak.
 
 KEMBALIKAN HANYA JSON valid dengan format:
 {
-  "PRD.md": "isi lengkap PRD.md yang sudah diselaraskan",
-  "TECH-STACK.md": "isi lengkap TECH-STACK.md yang sudah diselaraskan",
-  "UI-UX.md": "isi lengkap UI-UX.md yang sudah diselaraskan",
-  "SCHEMA.md": "isi lengkap SCHEMA.md yang sudah diselaraskan"
+  "PRD.md": { "## Nama Section": "konten yang sudah diselaraskan" },
+  "TECH-STACK.md": { "## Nama Section": "konten yang sudah diselaraskan" }
 }
+Hanya sertakan file yang perlu diubah. Jika tidak ada perubahan, jangan sertakan file tersebut.
 
 Kontrak proyek (JSON):
 ${JSON.stringify(contract, null, 2)}
 
-Istilah WAJIB yang harus digunakan secara KONSISTEN di keempat dokumen:
+Istilah WAJIB yang harus digunakan secara KONSISTEN:
 - Role: ${roleNames}
 - Status lifecycle: ${uniqueStatuses}
 - Prefix API: ${blueprint.apiBasePath || "/api/v1"}
@@ -351,25 +371,28 @@ Istilah WAJIB yang harus digunakan secara KONSISTEN di keempat dokumen:
 Temuan yang harus diselesaikan:
 ${findings.map((f, i) => `${i + 1}. ${f}`).join("\n")}
 
-PRD.md:
-${files["PRD.md"].slice(0, 6_000)}
-
-TECH-STACK.md:
-${files["TECH-STACK.md"].slice(0, 6_000)}
-
-UI-UX.md:
-${files["UI-UX.md"].slice(0, 6_000)}
-
-SCHEMA.md:
-${files["SCHEMA.md"].slice(0, 6_000)}
+Section yang perlu diselaraskan:
+${filesSection}
 
 Aturan ketat:
-- GUNAKAN nama role, status, dan endpoint yang SAMA persis di keempat dokumen.
+- GUNAKAN nama role, status, dan endpoint yang SAMA persis di semua dokumen.
 - Jangan menambah role, fitur, integrasi, atau aturan bisnis baru.
-- Jangan mengubah lifecycle atau fakta di luar kontrak.
-- Fokus HANYA pada menyelaraskan istilah yang berbeda antar dokumen.
-- Pertahankan struktur dan konten setiap dokumen. Hanya ubah istilah yang tidak konsisten.
-- Kembalikan JSON dengan isi lengkap keempat dokumen.`;
+- Kembalikan HANYA section yang diubah, bukan seluruh dokumen.
+- Heading section harus PERSIS sama dengan heading asli (case-sensitive).`;
+}
+
+export function mergeAlignmentSections(
+  document: string,
+  replacements: Record<string, string>,
+): string {
+  let merged = document;
+  for (const [sectionTitle, newContent] of Object.entries(replacements)) {
+    const target = markdownSections(merged).find((candidate) => normalizeSectionTitle(candidate.title) === normalizeSectionTitle(sectionTitle));
+    if (target) {
+      merged = `${merged.slice(0, target.start)}${newContent}\n${merged.slice(target.end).replace(/^\s*\n?/, "")}`;
+    }
+  }
+  return merged.trim();
 }
 
 export function getBlueprintSystemPrompt(): string {
