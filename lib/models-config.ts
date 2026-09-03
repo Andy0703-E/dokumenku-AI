@@ -23,15 +23,24 @@ export type ProviderModelMetadata = {
 // ── Hardcoded Models (not returned by /models endpoint) ─────────────────────
 // Models that work via the API but don't appear in the models list.
 // Used as aliases or internal promotional models.
+//
+// ⚠️ NOTE: promo:05 and promo:05-repair have been REMOVED because they route
+// to sf/step-3.5-flash and sf/step-3.7-flash, which experience chronic timeouts.
+// The system now relies on direct model selection or provider-exposed models.
 export const HARDCODED_MODELS: Array<{ id: string; name: string; tier: ModelTier; tokenMultiplier?: number }> = [
-  // Virtual combo models (gateway handles routing)
-  { id: "promo:05", name: "Promo 0,5 (3.5→3.5-2603→3.7)", tier: "starter", tokenMultiplier: 0.5 },
-  { id: "promo:05-repair", name: "Promo 0,5 Repair (3.7→3.5-2603→3.5)", tier: "starter", tokenMultiplier: 0.5 },
+  // Removed: promo:05 and promo:05-repair (timeout-prone)
+  // { id: "promo:05", name: "Promo 0,5 (3.5→3.5-2603→3.7)", tier: "starter", tokenMultiplier: 0.5 },
+  // { id: "promo:05-repair", name: "Promo 0,5 Repair (3.7→3.5-2603→3.5)", tier: "starter", tokenMultiplier: 0.5 },
+  
   { id: "auto:free", name: "Auto Free Model", tier: "starter", tokenMultiplier: 0 },
-  // Individual models (direct access)
-  { id: "sf/step-3.5-flash", name: "Step 3.5 Flash", tier: "starter", tokenMultiplier: 0.5 },
-  { id: "sf/step-3.5-flash-2603", name: "Step 3.5 Flash 2603", tier: "starter", tokenMultiplier: 0.5 },
-  { id: "sf/step-3.7-flash", name: "Step 3.7 Flash", tier: "starter", tokenMultiplier: 0.5 },
+  
+  // Removed: Individual step-flash models (timeout-prone)
+  // { id: "sf/step-3.5-flash", name: "Step 3.5 Flash", tier: "starter", tokenMultiplier: 0.5 },
+  // { id: "sf/step-3.5-flash-2603", name: "Step 3.5 Flash 2603", tier: "starter", tokenMultiplier: 0.5 },
+  // { id: "sf/step-3.7-flash", name: "Step 3.7 Flash", tier: "starter", tokenMultiplier: 0.5 },
+  //
+  // These models are now retrieved from provider's /models endpoint or admin panel
+  // and will be prioritized based on availability and performance stats.
 ];
 
 const FLAGSHIP_PATTERNS = [
